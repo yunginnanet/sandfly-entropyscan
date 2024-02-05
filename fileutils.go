@@ -1,5 +1,5 @@
 // Sandfly entropyscan file utilities to calculate entropy, crypto hashes, etc
-package fileutils
+package main
 
 /*
 This utility will help find packed or encrypted files or processes on a Linux system by calculating the entropy

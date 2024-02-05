@@ -36,20 +36,22 @@ Author: @SandflySecurity
 */
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"path"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strconv"
-
-	"github.com/sandflysecurity/sandfly-entropyscan/fileutils"
+	"strings"
 )
 
 const (
 	// constVersion Version
-	constVersion = "1.1.1"
+	constVersion = "1.2.0"
 	// constProcDir default /proc dir for processes.
 	constProcDir = "/proc"
 	// constDelimeterDefault default delimiter for CSV output.
@@ -60,214 +62,401 @@ const (
 	constMaxPID = 4194304
 )
 
-type fileData struct {
-	path    string
-	name    string
-	entropy float64
-	elf     bool
-	hash    hashes
+type csvHeaderStructMapping struct {
+	header    string // key in CSV header
+	structTag string // borrow JSON struct tag for CSV
 }
 
-type hashes struct {
-	md5    string
-	sha1   string
-	sha256 string
-	sha512 string
+type csvSchema struct {
+	keys  map[int]csvHeaderStructMapping
+	delim string
 }
 
-func main() {
-	var filePath string
-	var dirPath string
-	var delimChar string
-	var entropyMaxVal float64
-	var elfOnly bool
-	var procOnly bool
-	var csvOutput bool
-	var version bool
+func (csv csvSchema) header() []byte {
+	var buf = new(bytes.Buffer)
+	for i := 0; i < len(csv.keys); i++ {
+		_, _ = buf.WriteString(csv.keys[i].header)
+		if i < len(csv.keys)-1 {
+			_, _ = buf.WriteString(csv.delim)
+		}
+	}
+	return buf.Bytes()
+}
 
-	flag.StringVar(&filePath, "file", "", "full path to a single file to analyze")
-	flag.StringVar(&dirPath, "dir", "", "directory name to analyze")
-	flag.StringVar(&delimChar, "delim", constDelimeterDefault, "delimeter for CSV output")
-	flag.Float64Var(&entropyMaxVal, "entropy", 0, "show any file with entropy greater than or equal to this value (0.0 - 8.0 max 8.0, default is 0)")
-	flag.BoolVar(&elfOnly, "elf", false, "only check ELF executables")
-	flag.BoolVar(&procOnly, "proc", false, "check running processes")
-	flag.BoolVar(&csvOutput, "csv", false, "output results in CSV format (filename, path, entropy, elf_file [true|false], MD5, SHA1, SHA256, SHA512)")
-	flag.BoolVar(&version, "version", false, "show version and exit")
+func (csv csvSchema) parse(in any) ([]byte, error) {
+	var buf = new(bytes.Buffer)
+	write := func(s string) { _, _ = buf.WriteString(s) }
+	ref := reflect.ValueOf(in)
+
+	for i := 0; i < len(csv.keys); i++ {
+		var field = reflect.ValueOf(nil)
+		for j := 0; j < ref.NumField(); j++ {
+			structTag := ref.Type().Field(j).Tag.Get("json")
+			target := csv.keys[i].structTag
+			if strings.Contains(target, ".") {
+				target = strings.Split(target, ".")[0]
+			}
+			switch structTag {
+			case target:
+				field = ref.Field(j)
+				break
+			default:
+			}
+		}
+		if (field.Kind() == reflect.Pointer || field.Kind() == reflect.Interface) && field.IsNil() {
+			continue
+		}
+
+		switch field.Kind() {
+		case reflect.String:
+			write(field.String())
+		case reflect.Float64:
+			write(strconv.FormatFloat(field.Float(), 'f', 2, 64))
+		case reflect.Float32:
+			write(strconv.FormatFloat(field.Float(), 'f', 2, 32))
+		case reflect.Bool:
+			write(strconv.FormatBool(field.Bool()))
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			write(strconv.Itoa(int(field.Int())))
+		case reflect.Struct:
+			targetTag := csv.keys[i].structTag
+			if strings.Contains(targetTag, ".") {
+				targetTag = strings.Split(targetTag, ".")[1]
+			}
+			write(field.FieldByName(targetTag).String())
+		default:
+			return nil, fmt.Errorf("csv: unsupported type: %s", field.Kind().String())
+		}
+
+		if i < len(csv.keys)-1 {
+			write(csv.delim)
+		}
+
+	}
+	return buf.Bytes(), nil
+}
+
+// (filename, path, entropy, elf_file [true|false], MD5, SHA1, SHA256, SHA512)
+var defCSVHeader = csvSchema{
+	keys: map[int]csvHeaderStructMapping{
+		0: {"filename", "name"},
+		1: {"path", "path"},
+		2: {"entropy", "entropy"},
+		3: {"elf_file", "elf"},
+		4: {"md5", "checksums.MD5"},
+		5: {"sha1", "checksums.SHA1"},
+		6: {"sha256", "checksums.SHA256"},
+		7: {"sha512", "checksums.SHA512"},
+	},
+	delim: constDelimeterDefault,
+}
+
+type Results struct {
+	Files
+	csvSchema csvSchema
+}
+
+func NewResults() *Results {
+	return &Results{Files: make(Files, 0), csvSchema: defCSVHeader}
+}
+
+func (r *Results) WithDelimiter(delim string) *Results {
+	r.csvSchema.delim = delim
+	return r
+}
+
+func (r *Results) Add(f File) {
+	r.Files = append(r.Files, f)
+}
+
+func (r *Results) MarshalCSV() ([]byte, error) {
+	buf := new(bytes.Buffer)
+	write := func(data []byte) { _, _ = buf.Write(data) }
+	write(r.csvSchema.header())
+	write([]byte("\n"))
+	for _, file := range r.Files {
+		entry, err := r.csvSchema.parse(file)
+		if err != nil {
+			return nil, err
+		}
+		write(entry)
+	}
+	return buf.Bytes(), nil
+}
+
+type Files []File
+
+type File struct {
+	Path      string    `json:"path"`
+	Name      string    `json:"name"`
+	Entropy   float64   `json:"entropy"`
+	IsELF     bool      `json:"elf"`
+	Checksums Checksums `json:"checksums"`
+}
+
+func (f *File) MarshalCSV() ([]byte, error) {
+	return []byte(fmt.Sprintf("%s,%s,%.2f,%v,%s,%s,%s,%s\n",
+		f.Name,
+		f.Path,
+		f.Entropy,
+		f.IsELF,
+		f.Checksums.MD5,
+		f.Checksums.SHA1,
+		f.Checksums.SHA256,
+		f.Checksums.SHA512)), nil
+}
+
+type Checksums struct {
+	MD5    string `json:"md5"`
+	SHA1   string `json:"sha1"`
+	SHA256 string `json:"sha256"`
+	SHA512 string `json:"sha512"`
+}
+
+type config struct {
+	filePath            string
+	dirPath             string
+	delimChar           string
+	entropyMaxVal       float64
+	elfOnly             bool
+	procOnly            bool
+	csvOutput           bool
+	jsonOutput          bool
+	printInterimResults bool
+	outputFile          string
+	version             bool
+	sumMD5              bool
+	sumSHA1             bool
+	sumSHA256           bool
+	sumSHA512           bool
+	results             *Results
+}
+
+func newConfigFromFlags() *config {
+	cfg := new(config)
+	flag.StringVar(&cfg.filePath, "file", "", "full path to a single file to analyze")
+	flag.StringVar(&cfg.dirPath, "dir", "", "directory name to analyze")
+	flag.StringVar(&cfg.delimChar, "delim", constDelimeterDefault, "delimeter for CSV output")
+	flag.StringVar(&cfg.outputFile, "output", "", "output file to write results to (default stdout) (only json and csv formats supported)")
+
+	flag.Float64Var(&cfg.entropyMaxVal, "entropy", 0, "show any file with entropy greater than or equal to this value (0.0 - 8.0 max 8.0, default is 0)")
+
+	flag.BoolVar(&cfg.elfOnly, "elf", false, "only check ELF executables")
+	flag.BoolVar(&cfg.procOnly, "proc", false, "check running processes")
+	flag.BoolVar(&cfg.csvOutput, "csv", false, "output results in CSV format (filename, path, entropy, elf_file [true|false], MD5, SHA1, SHA256, SHA512)")
+	flag.BoolVar(&cfg.jsonOutput, "json", false, "output results in JSON format")
+	flag.BoolVar(&cfg.printInterimResults, "print", false, "print interim results to stdout even if output file is specified")
+	flag.BoolVar(&cfg.version, "version", false, "show version and exit")
+	flag.BoolVar(&cfg.sumMD5, "md5", true, "calculate and show MD5 checksum of file(s)")
+	flag.BoolVar(&cfg.sumSHA1, "sha1", true, "calculate and show SHA1 checksum of file(s)")
+	flag.BoolVar(&cfg.sumSHA256, "sha256", true, "calculate and show SHA256 checksum of file(s)")
+	flag.BoolVar(&cfg.sumSHA512, "sha512", true, "calculate and show SHA512 checksum of file(s)")
+
 	flag.Parse()
 
-	if version {
+	switch {
+	case cfg.version:
 		fmt.Printf("sandfly-entropyscan Version %s\n", constVersion)
 		fmt.Printf("Copyright (c) 2019-2022 Sandlfy Security - www.sandflysecurity.com\n\n")
 		os.Exit(0)
-	}
-
-	if entropyMaxVal > 8 {
+	case cfg.entropyMaxVal > 8:
 		log.Fatal("max entropy value is 8.0")
-	}
-	if entropyMaxVal < 0 {
+	case cfg.entropyMaxVal < 0:
 		log.Fatal("min entropy value is 0.0")
+	default:
+		// proceed
 	}
 
-	if procOnly {
+	return cfg
+}
+
+func main() {
+	cfg := newConfigFromFlags()
+
+	if cfg.csvOutput || cfg.jsonOutput {
+		cfg.results = NewResults()
+	}
+
+	if !cfg.csvOutput && !cfg.jsonOutput {
+		cfg.printInterimResults = true
+	}
+
+	if cfg.csvOutput && cfg.jsonOutput {
+		log.Fatal("csv and json output options are mutually exclusive")
+	}
+
+	defer func() {
+		var res []byte
+		switch {
+		case cfg.csvOutput:
+			var err error
+			if res, err = cfg.results.MarshalCSV(); err != nil {
+				log.Fatal(err.Error())
+			}
+		case cfg.jsonOutput:
+			var err error
+			if res, err = json.Marshal(cfg.results); err != nil {
+				log.Fatal(err.Error())
+			}
+		default:
+		}
+		if len(res) > 0 {
+			switch {
+			case cfg.outputFile != "":
+				if err := os.WriteFile(cfg.outputFile, res, 0644); err != nil {
+					log.Fatal(err.Error())
+				}
+			default:
+				_, _ = os.Stdout.Write(res)
+			}
+		}
+	}()
+
+	switch {
+	case cfg.procOnly:
+		if runtime.GOOS == "windows" {
+			log.Fatalf("process checking option is not supported on Windows")
+		}
 		if os.Geteuid() != 0 {
 			log.Fatalf("process checking option requires UID/EUID 0 (root) to run")
 		}
-		// This will do a PID bust of all PID range to help detect hidden PIDs.
-		pidPaths, err := genPIDExePaths()
-		if err != nil {
-			log.Fatalf("error generating PID list: %v\n", err)
-		}
-		for pid := 0; pid < len(pidPaths); pid++ {
+
+		results := NewResults()
+
+		for pid := constMinPID; pid < constMaxPID; pid++ {
+			procfsTarget := filepath.Join(constProcDir, strconv.Itoa(pid), "/exe")
 			// Only check elf files which should be all these will be anyway.
-			fileInfo, err := checkFilePath(pidPaths[pid], true, entropyMaxVal)
+			file, err := cfg.checkFilePath(procfsTarget)
 			// anything that is not an error is a valid /proc/*/exe link we could see and process. We will analyze it.
-			if err == nil {
-				if fileInfo.entropy >= entropyMaxVal {
-					printResults(fileInfo, csvOutput, delimChar)
-				}
-			}
-		}
-		os.Exit(0)
-	}
-
-	if filePath != "" {
-		fileInfo, err := checkFilePath(filePath, elfOnly, entropyMaxVal)
-		if err != nil {
-			log.Fatalf("error processing file (%s): %v\n", filePath, err)
-		}
-
-		if fileInfo.entropy >= entropyMaxVal {
-			printResults(fileInfo, csvOutput, delimChar)
-		}
-
-		os.Exit(0)
-	}
-
-	if dirPath != "" {
-		var search = func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
-				log.Fatalf("error walking directory (%s) inside search function: %v\n", filePath, err)
+				log.Printf("(!) could not read /proc/%d/exe: %s", pid, err)
+				continue
+			}
+			if (file.Entropy < cfg.entropyMaxVal) || (!file.IsELF && cfg.elfOnly) {
+				continue
+			}
+
+			results.Add(*file)
+			cfg.printResults(*file)
+		}
+	case cfg.filePath != "":
+		fileInfo, err := cfg.checkFilePath(cfg.filePath)
+		if err != nil {
+			log.Fatalf("error processing file (%s): %v\n", cfg.filePath, err)
+		}
+		if fileInfo.Entropy >= cfg.entropyMaxVal {
+			cfg.printResults(*fileInfo)
+		}
+	case cfg.dirPath != "":
+		var search = func(filePath string, info os.FileInfo, err error) error {
+			dir, _ := filepath.Split(filePath)
+			if err != nil {
+				return fmt.Errorf("error walking directory (%s): %v\n", dir, err)
 			}
 			// If info comes back as nil we don't want to read it or we panic.
-			if info != nil {
-				// if not a directory, then check it for a file we want.
-				if !info.IsDir() {
-					// Only check regular files. Checking devices, etc. won't work.
-					if info.Mode().IsRegular() {
-						fileInfo, err := checkFilePath(filePath, elfOnly, entropyMaxVal)
-						if err != nil {
-							log.Fatalf("error processing file (%s): %v\n", filePath, err)
-						}
-
-						if fileInfo.entropy >= entropyMaxVal {
-							printResults(fileInfo, csvOutput, delimChar)
-						}
-					}
-				}
+			if info == nil {
+				return nil
 			}
+			if info.IsDir() {
+				return nil
+			}
+			// Only check regular files. Checking devices, etc. won't work.
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			fileInfo, err := cfg.checkFilePath(filePath)
+			if err != nil {
+				return fmt.Errorf("error processing file (%s): %v\n", filePath, err)
+			}
+
+			if fileInfo.Entropy >= cfg.entropyMaxVal {
+				cfg.printResults(*fileInfo)
+			}
+
 			return nil
 		}
-		err := filepath.Walk(dirPath, search)
+		err := filepath.Walk(cfg.dirPath, search)
 		if err != nil {
-			log.Fatalf("error walking directory (%s): %v\n", dirPath, err)
+			log.Fatalf("error walking directory (%s): %v\n", cfg.dirPath, err)
 		}
-		os.Exit(0)
 	}
 }
 
-// Prints results
-func printResults(fileInfo fileData, csvFormat bool, delimChar string) {
-
-	if !csvFormat {
-		fmt.Printf("filename: %s\npath: %s\nentropy: %.2f\nelf: %v\nmd5: %s\nsha1: %s\nsha256: %s\nsha512: %s\n\n",
-			fileInfo.name,
-			fileInfo.path,
-			fileInfo.entropy,
-			fileInfo.elf,
-			fileInfo.hash.md5,
-			fileInfo.hash.sha1,
-			fileInfo.hash.sha256,
-			fileInfo.hash.sha512)
-	} else {
-		fmt.Printf("%s%s%s%s%.2f%s%v%s%s%s%s%s%s%s%s\n",
-			fileInfo.name,
-			delimChar,
-			fileInfo.path,
-			delimChar,
-			fileInfo.entropy,
-			delimChar,
-			fileInfo.elf,
-			delimChar,
-			fileInfo.hash.md5,
-			delimChar,
-			fileInfo.hash.sha1,
-			delimChar,
-			fileInfo.hash.sha256,
-			delimChar,
-			fileInfo.hash.sha512)
+func (cfg *config) printResults(file File) {
+	switch {
+	case (cfg.csvOutput || cfg.jsonOutput) && cfg.outputFile == "":
+		cfg.results.Add(file)
+	case (cfg.csvOutput || cfg.jsonOutput) && cfg.outputFile != "":
+		cfg.results.Add(file)
+		fallthrough
+	case cfg.printInterimResults:
+		format := "filename: %s\npath: %s\nentropy: %.2f\nelf: %v\n"
+		str := fmt.Sprintf(format,
+			file.Name,
+			file.Path,
+			file.Entropy,
+			file.IsELF,
+		)
+		if cfg.sumMD5 {
+			str += "md5: " + file.Checksums.MD5 + "\n"
+		}
+		if cfg.sumSHA1 {
+			str += "sha1: " + file.Checksums.SHA1 + "\n"
+		}
+		if cfg.sumSHA256 {
+			str += "sha256: " + file.Checksums.SHA256 + "\n"
+		}
+		if cfg.sumSHA512 {
+			str += "sha512: " + file.Checksums.SHA512 + "\n"
+		}
+		format += "\n"
+		fmt.Print(str)
 	}
 }
 
-func checkFilePath(filePath string, elfOnly bool, entropyMaxVal float64) (fileInfo fileData, err error) {
-	isElfType, err := fileutils.IsElfType(filePath)
-	if err != nil {
-		return fileInfo, err
+func (cfg *config) checkFilePath(filePath string) (file *File, err error) {
+	file = new(File)
+	file.Path = filePath
+
+	if file.IsELF, err = IsElfType(filePath); err != nil {
+		return file, err
 	}
-	_, fileName := filepath.Split(filePath)
 
-	fileInfo.path = filePath
-	fileInfo.name = fileName
-	fileInfo.elf = isElfType
-	fileInfo.entropy = -1
+	// handle procfs links
+	if _, file.Name = filepath.Split(filePath); file.Name == "exe" {
+		if file.Name, err = os.Readlink(filePath); err != nil {
+			log.Printf("(!) could not read link (%s): %s\n", filePath, err)
+			file.Name = "unknown"
+		} else {
+			file.Name = filepath.Base(file.Name)
+		}
+	}
 
-	// If they only want Linux ELFs.
-	if elfOnly && isElfType {
-		entropy, err := fileutils.Entropy(filePath)
-		if err != nil {
+	switch {
+	case cfg.elfOnly && !file.IsELF:
+		return &File{}, nil
+	case !cfg.elfOnly || (cfg.elfOnly && file.IsELF):
+		var entropy float64
+		if entropy, err = Entropy(filePath); err != nil {
 			log.Fatalf("error calculating entropy for file (%s): %v\n", filePath, err)
 		}
-		fileInfo.entropy = entropy
-	}
-	// They want entropy on all files.
-	if !elfOnly {
-		entropy, err := fileutils.Entropy(filePath)
-		if err != nil {
-			log.Fatalf("error calculating entropy for file (%s): %v\n", filePath, err)
-		}
-		fileInfo.entropy = entropy
+		file.Entropy = entropy
 	}
 
-	if fileInfo.entropy >= entropyMaxVal {
-		md5, err := fileutils.HashMD5(filePath)
-		if err != nil {
-			log.Fatalf("error calculating MD5 hash for file (%s): %v\n", filePath, err)
-		}
-		sha1, err := fileutils.HashSHA1(filePath)
-		if err != nil {
-			log.Fatalf("error calculating SHA1 hash for file (%s): %v\n", filePath, err)
-		}
-		sha256, err := fileutils.HashSHA256(filePath)
-		if err != nil {
-			log.Fatalf("error calculating SHA256 hash for file (%s): %v\n", filePath, err)
-		}
-		sha512, err := fileutils.HashSHA512(filePath)
-		if err != nil {
-			log.Fatalf("error calculating SHA512 hash for file (%s): %v\n", filePath, err)
-		}
-		fileInfo.hash.md5 = md5
-		fileInfo.hash.sha1 = sha1
-		fileInfo.hash.sha256 = sha256
-		fileInfo.hash.sha512 = sha512
+	if file.Entropy < cfg.entropyMaxVal {
+		return file, nil
 	}
 
-	return fileInfo, nil
-}
-
-func genPIDExePaths() (pidPaths []string, err error) {
-
-	for pid := constMinPID; pid < constMaxPID; pid++ {
-		pidPaths = append(pidPaths, path.Join(constProcDir, strconv.Itoa(pid), "/exe"))
+	type hasher func(string) (string, error)
+	do := map[*string]hasher{
+		&file.Checksums.MD5: HashMD5, &file.Checksums.SHA1: HashSHA1,
+		&file.Checksums.SHA256: HashSHA256, &file.Checksums.SHA512: HashSHA512,
+	}
+	for k, v := range do {
+		if *k, err = v(filePath); err != nil {
+			log.Fatalf("error calculating checksum for file (%s): %v\n", filePath, err)
+		}
 	}
 
-	return pidPaths, nil
+	return file, nil
 }
