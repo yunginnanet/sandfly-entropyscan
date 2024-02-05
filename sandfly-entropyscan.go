@@ -194,18 +194,6 @@ type File struct {
 	Checksums Checksums `json:"checksums"`
 }
 
-func (f *File) MarshalCSV() ([]byte, error) {
-	return []byte(fmt.Sprintf("%s,%s,%.2f,%v,%s,%s,%s,%s\n",
-		f.Name,
-		f.Path,
-		f.Entropy,
-		f.IsELF,
-		f.Checksums.MD5,
-		f.Checksums.SHA1,
-		f.Checksums.SHA256,
-		f.Checksums.SHA512)), nil
-}
-
 type Checksums struct {
 	MD5    string `json:"md5"`
 	SHA1   string `json:"sha1"`
@@ -275,6 +263,9 @@ func main() {
 
 	if cfg.csvOutput || cfg.jsonOutput {
 		cfg.results = NewResults()
+		if cfg.delimChar != constDelimeterDefault {
+			cfg.results = cfg.results.WithDelimiter(cfg.delimChar)
+		}
 	}
 
 	if !cfg.csvOutput && !cfg.jsonOutput {
