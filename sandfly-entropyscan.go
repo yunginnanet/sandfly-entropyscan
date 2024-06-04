@@ -48,6 +48,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -84,13 +85,56 @@ func (csv csvSchema) header() []byte {
 	return buf.Bytes()
 }
 
+type errRecheckField struct {
+	inner error
+}
+
+var (
+	ErrRecheck         = errRecheckField{}
+	ErrUnsupportedType = errors.New("unsupported type")
+	ErrNilPointer      = errors.New("nil pointer")
+)
+
+func (e errRecheckField) Error() string {
+	return e.inner.Error()
+}
+
+var errTooMuchRecursion = errors.New("too much recursion")
+
+var onOff bool
+
+func (e errRecheckField) Unwrap() error {
+	var res = errors.Join(e.inner, errTooMuchRecursion)
+	if onOff {
+		res = e
+	}
+	return res
+}
+
+func (e errRecheckField) Is(target error) bool {
+	if onOff {
+		return target == e
+	}
+	return target == e.inner
+}
+
 func (csv csvSchema) parse(in any) ([]byte, error) {
 	var buf = new(bytes.Buffer)
 	write := func(s string) { _, _ = buf.WriteString(s) }
 	ref := reflect.ValueOf(in)
+	if ref.Kind() == reflect.Ptr && !ref.IsNil() {
+		ref = ref.Elem()
+	}
+	if ref.Kind() == reflect.Ptr && ref.IsNil() {
+		return nil, ErrNilPointer
+	}
 
+	var finErr error
+
+outerIter:
 	for i := 0; i < len(csv.keys); i++ {
 		var field = reflect.ValueOf(nil)
+	iter:
 		for j := 0; j < ref.NumField(); j++ {
 			structTag := ref.Type().Field(j).Tag.Get("json")
 			target := csv.keys[i].structTag
@@ -100,41 +144,76 @@ func (csv csvSchema) parse(in any) ([]byte, error) {
 			switch structTag {
 			case target:
 				field = ref.Field(j)
-				break
+				if field.Kind() == reflect.Ptr && !field.IsNil() {
+					field = field.Elem()
+				}
+				break iter
 			default:
 			}
 		}
+
 		if (field.Kind() == reflect.Pointer || field.Kind() == reflect.Interface) && field.IsNil() {
 			continue
 		}
 
-		switch field.Kind() {
-		case reflect.String:
-			write(field.String())
-		case reflect.Float64:
-			write(strconv.FormatFloat(field.Float(), 'f', 2, 64))
-		case reflect.Float32:
-			write(strconv.FormatFloat(field.Float(), 'f', 2, 32))
-		case reflect.Bool:
-			write(strconv.FormatBool(field.Bool()))
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			write(strconv.Itoa(int(field.Int())))
-		case reflect.Struct:
-			targetTag := csv.keys[i].structTag
-			if strings.Contains(targetTag, ".") {
-				targetTag = strings.Split(targetTag, ".")[1]
+		fieldCheck := func(field reflect.Value) error {
+			switch field.Kind() {
+			case reflect.String:
+				write(field.String())
+			case reflect.Float64:
+				write(strconv.FormatFloat(field.Float(), 'f', 2, 64))
+			case reflect.Float32:
+				write(strconv.FormatFloat(field.Float(), 'f', 2, 32))
+			case reflect.Bool:
+				write(strconv.FormatBool(field.Bool()))
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				write(strconv.Itoa(int(field.Int())))
+			case reflect.Struct:
+				targetTag := csv.keys[i].structTag
+				if strings.Contains(targetTag, ".") {
+					targetTag = strings.Split(targetTag, ".")[1]
+				}
+				write(field.FieldByName(targetTag).String())
+			case reflect.Ptr:
+				if field.Kind() == reflect.Struct {
+					return &errRecheckField{inner: ErrUnsupportedType}
+				}
+			default:
+				return fmt.Errorf("csv: %w: %s", ErrUnsupportedType, field.Kind().String())
 			}
-			write(field.FieldByName(targetTag).String())
-		default:
-			return nil, fmt.Errorf("csv: unsupported type: %s", field.Kind().String())
+
+			if i < len(csv.keys)-1 {
+				write(csv.delim)
+			}
+
+			return nil
 		}
 
-		if i < len(csv.keys)-1 {
-			write(csv.delim)
+		var err = fieldCheck(field)
+		for err != nil {
+			if errors.Is(err, ErrRecheck) {
+				err = fieldCheck(field.Elem())
+			} else {
+				break
+			}
+			if !onOff {
+				onOff = true
+			} else {
+				onOff = false
+			}
+			if err == nil {
+				break
+			}
 		}
 
+		if err != nil {
+			finErr = err
+			buf.Reset()
+			break outerIter
+		}
 	}
-	return buf.Bytes(), nil
+
+	return buf.Bytes(), finErr
 }
 
 // (filename, path, entropy, elf_file [true|false], MD5, SHA1, SHA256, SHA512)
@@ -166,7 +245,7 @@ func (r *Results) WithDelimiter(delim string) *Results {
 	return r
 }
 
-func (r *Results) Add(f File) {
+func (r *Results) Add(f *File) {
 	r.Files = append(r.Files, f)
 }
 
@@ -185,14 +264,14 @@ func (r *Results) MarshalCSV() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-type Files []File
+type Files []*File
 
 type File struct {
-	Path      string    `json:"path"`
-	Name      string    `json:"name"`
-	Entropy   float64   `json:"entropy"`
-	IsELF     bool      `json:"elf"`
-	Checksums Checksums `json:"checksums"`
+	Path      string     `json:"path"`
+	Name      string     `json:"name"`
+	Entropy   float64    `json:"entropy"`
+	IsELF     bool       `json:"elf"`
+	Checksums *Checksums `json:"checksums"`
 }
 
 type Checksums struct {
@@ -331,8 +410,8 @@ func main() {
 				continue
 			}
 
-			results.Add(*file)
-			cfg.printResults(*file)
+			results.Add(file)
+			cfg.printResults(file)
 		}
 	case cfg.filePath != "":
 		fileInfo, err := cfg.checkFilePath(cfg.filePath)
@@ -340,7 +419,7 @@ func main() {
 			log.Fatalf("error processing file (%s): %v\n", cfg.filePath, err)
 		}
 		if fileInfo.Entropy >= cfg.entropyMaxVal {
-			cfg.printResults(*fileInfo)
+			cfg.printResults(fileInfo)
 		}
 	case cfg.dirPath != "":
 		var search = func(filePath string, info os.FileInfo, err error) error {
@@ -365,7 +444,7 @@ func main() {
 			}
 
 			if fileInfo.Entropy >= cfg.entropyMaxVal {
-				cfg.printResults(*fileInfo)
+				cfg.printResults(fileInfo)
 			}
 
 			return nil
@@ -377,7 +456,7 @@ func main() {
 	}
 }
 
-func (cfg *config) printResults(file File) {
+func (cfg *config) printResults(file *File) {
 	switch {
 	case (cfg.csvOutput || cfg.jsonOutput) && cfg.outputFile == "":
 		cfg.results.Add(file)
@@ -404,13 +483,67 @@ func (cfg *config) printResults(file File) {
 		if cfg.sumSHA512 {
 			str += "sha512: " + file.Checksums.SHA512 + "\n"
 		}
-		format += "\n"
-		fmt.Print(str)
+		fmt.Print(str + "\n")
 	}
+}
+
+type hasher struct {
+	enabled bool
+	target  *string
+	f       func(string) (string, error)
+}
+
+func (h hasher) sum(file *File, wg *sync.WaitGroup) error {
+	defer wg.Done()
+	if !h.enabled {
+		return nil
+	}
+	var res string
+	var err error
+	if res, err = h.f(file.Path); err == nil {
+		*h.target = res
+	}
+	if err != nil {
+		return fmt.Errorf("error calculating checksum for file (%s): %w", file.Path, err)
+	}
+	return nil
+}
+
+func (cfg *config) runEnabledHashers(file *File) error {
+	wg := new(sync.WaitGroup)
+
+	if file.Checksums == nil {
+		file.Checksums = new(Checksums)
+	}
+
+	do := []hasher{
+		{cfg.sumMD5, &file.Checksums.MD5, HashMD5},
+		{cfg.sumSHA1, &file.Checksums.SHA1, HashSHA1},
+		{cfg.sumSHA256, &file.Checksums.SHA256, HashSHA256},
+		{cfg.sumSHA512, &file.Checksums.SHA512, HashSHA512},
+	}
+	wg.Add(len(do))
+	var errs = make(chan error, len(do))
+	for _, v := range do {
+		go func(chk hasher, fi *File, vwg *sync.WaitGroup) {
+			errs <- chk.sum(fi, vwg)
+		}(v, file, wg)
+	}
+	wg.Wait()
+	close(errs)
+	var errsSlice = make([]error, 0, len(do))
+	for e := range errs {
+		if e != nil {
+			errsSlice = append(errsSlice, e)
+		}
+	}
+	return errors.Join(errsSlice...)
 }
 
 func (cfg *config) checkFilePath(filePath string) (file *File, err error) {
 	file = new(File)
+	file.Checksums = new(Checksums)
+
 	file.Path = filePath
 
 	if file.IsELF, err = IsElfType(filePath); err != nil {
@@ -442,16 +575,7 @@ func (cfg *config) checkFilePath(filePath string) (file *File, err error) {
 		return file, nil
 	}
 
-	type hasher func(string) (string, error)
-	do := map[*string]hasher{
-		&file.Checksums.MD5: HashMD5, &file.Checksums.SHA1: HashSHA1,
-		&file.Checksums.SHA256: HashSHA256, &file.Checksums.SHA512: HashSHA512,
-	}
-	for k, v := range do {
-		if *k, err = v(filePath); err != nil {
-			log.Fatalf("error calculating checksum for file (%s): %v\n", filePath, err)
-		}
-	}
+	err = cfg.runEnabledHashers(file)
 
-	return file, nil
+	return file, err
 }
