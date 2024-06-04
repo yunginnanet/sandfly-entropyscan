@@ -493,8 +493,7 @@ type hasher struct {
 	f       func(string) (string, error)
 }
 
-func (h hasher) sum(file *File, wg *sync.WaitGroup) error {
-	defer wg.Done()
+func (h hasher) sum(file *File) error {
 	if !h.enabled {
 		return nil
 	}
@@ -526,7 +525,8 @@ func (cfg *config) runEnabledHashers(file *File) error {
 	var errs = make(chan error, len(do))
 	for _, v := range do {
 		go func(chk hasher, fi *File, vwg *sync.WaitGroup) {
-			errs <- chk.sum(fi, vwg)
+			errs <- chk.sum(fi)
+			vwg.Done()
 		}(v, file, wg)
 	}
 	wg.Wait()
