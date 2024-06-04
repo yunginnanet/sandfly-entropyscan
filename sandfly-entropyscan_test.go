@@ -293,7 +293,7 @@ func TestJSONCSVParityAndCheckOwnPID(t *testing.T) {
 
 	expected := [][]byte{
 		[]byte("filename,path,entropy,elf_file,md5,sha1,sha256,sha512\n"),
-		[]byte(file.Name + "," + file.Path + "," + strconv.FormatFloat(file.Entropy, 'f', -1, 64) + "," +
+		[]byte(file.Name + "," + file.Path + "," + strconv.FormatFloat(file.Entropy, 'f', 2, 64) + "," +
 			strconv.FormatBool(file.IsELF) + "," + file.Checksums.MD5 + "," + file.Checksums.SHA1 + "," +
 			file.Checksums.SHA256 + "," + file.Checksums.SHA512 + "\n"),
 	}
