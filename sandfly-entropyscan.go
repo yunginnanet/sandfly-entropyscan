@@ -38,6 +38,7 @@ Author: @SandflySecurity
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -319,6 +320,9 @@ func main() {
 			// Only check elf files which should be all these will be anyway.
 			file, err := cfg.checkFilePath(procfsTarget)
 			// anything that is not an error is a valid /proc/*/exe link we could see and process. We will analyze it.
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			if err != nil {
 				log.Printf("(!) could not read /proc/%d/exe: %s", pid, err)
 				continue
