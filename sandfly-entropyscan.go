@@ -49,6 +49,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/panjf2000/ants/v2"
 )
 
 const (
@@ -245,6 +247,7 @@ type config struct {
 	sumSHA256           bool
 	sumSHA512           bool
 	results             *Results
+	goFast              bool
 }
 
 func newConfigFromFlags() *config {
@@ -266,6 +269,8 @@ func newConfigFromFlags() *config {
 	flag.BoolVar(&cfg.sumSHA1, "sha1", true, "calculate and show SHA1 checksum of file(s)")
 	flag.BoolVar(&cfg.sumSHA256, "sha256", true, "calculate and show SHA256 checksum of file(s)")
 	flag.BoolVar(&cfg.sumSHA512, "sha512", true, "calculate and show SHA512 checksum of file(s)")
+
+	flag.BoolVar(&cfg.goFast, "fast", false, "use worker pool for concurrent file processing (experimental)")
 
 	flag.Parse()
 
@@ -341,24 +346,72 @@ func main() {
 
 		results := NewResults()
 
-		for pid := constMinPID; pid < constMaxPID; pid++ {
+		// TODO: D.R.Y myself off, not to mention fix the reflection `onOff` mess
+
+		synchronous := func(pid int) {
 			procfsTarget := filepath.Join(constProcDir, strconv.Itoa(pid), "/exe")
 			// Only check elf files which should be all these will be anyway.
 			file, err := cfg.checkFilePath(procfsTarget)
 			// anything that is not an error is a valid /proc/*/exe link we could see and process. We will analyze it.
 			if errors.Is(err, os.ErrNotExist) {
-				continue
+				return
 			}
 			if err != nil {
 				log.Printf("(!) could not read /proc/%d/exe: %s", pid, err)
-				continue
+				return
 			}
 			if (file.Entropy < cfg.entropyMaxVal) || (!file.IsELF && cfg.elfOnly) {
-				continue
+				return
 			}
-
 			results.Add(file)
 			cfg.printResults(file)
+		}
+
+		hedgehog := func() {
+			wg := new(sync.WaitGroup)
+			wg.Add(constMaxPID - constMinPID)
+
+			workers, _ := ants.NewPool(runtime.NumCPU())
+			printSync := &sync.Mutex{}
+
+			for pid := constMinPID; pid < constMaxPID; pid++ {
+				_ = workers.Submit(func() {
+					defer wg.Done()
+					procfsTarget := filepath.Join(constProcDir, strconv.Itoa(pid), "/exe")
+					// Only check elf files which should be all these will be anyway.
+					file, err := cfg.checkFilePath(procfsTarget)
+					// anything that is not an error is a valid /proc/*/exe link we could see and process. We will analyze it.
+					if errors.Is(err, os.ErrNotExist) {
+						return
+					}
+					if err != nil {
+						printSync.Lock()
+						log.Printf("(!) could not read /proc/%d/exe: %s", pid, err)
+						printSync.Unlock()
+						return
+					}
+					if (file.Entropy < cfg.entropyMaxVal) || (!file.IsELF && cfg.elfOnly) {
+						return
+					}
+
+					printSync.Lock()
+					results.Add(file)
+					cfg.printResults(file)
+					printSync.Unlock()
+				})
+			}
+
+			wg.Wait()
+		}
+
+		switch cfg.goFast {
+		case true:
+			fmt.Println("gotta go fast!")
+			hedgehog()
+		case false:
+			for pid := constMinPID; pid < constMaxPID; pid++ {
+				synchronous(pid)
+			}
 		}
 	case cfg.filePath != "":
 		fileInfo, err := cfg.checkFilePath(cfg.filePath)
