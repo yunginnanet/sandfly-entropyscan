@@ -157,6 +157,10 @@ outerIter:
 			write(csv.delim)
 		}
 
+		if i == len(csv.keys)-1 {
+			write("\n")
+		}
+
 		if finErr != nil {
 			break outerIter
 		}
