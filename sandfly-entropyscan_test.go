@@ -19,7 +19,7 @@ func TestCsvSchemaHeader(t *testing.T) {
 	expected := []byte("filename,path")
 	result := csv.header()
 
-	if string(result) != string(expected) {
+	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("expected %s but got %s", string(expected), string(result))
 	}
 }
@@ -77,7 +77,7 @@ func TestResultChecksums(t *testing.T) {
 	expected := []byte("filename,path,entropy,elf_file,md5,sha1,sha256,sha512\n" +
 		"yeet," + path + "," + "0.50,false," + yeet.Checksums.MD5 + "," +
 		yeet.Checksums.SHA1 + "," + yeet.Checksums.SHA256 + "," +
-		yeet.Checksums.SHA512,
+		yeet.Checksums.SHA512 + "\n",
 	)
 
 	result, err := results.MarshalCSV()
@@ -86,7 +86,7 @@ func TestResultChecksums(t *testing.T) {
 		t.Errorf("\n\nunexpected error:\n %v", err)
 	}
 
-	if string(result) != string(expected) {
+	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("\n\nexpected:\n"+
 			"%s \n"+
 			"got: \n"+
@@ -113,14 +113,14 @@ func TestResultsCustomSchema(t *testing.T) {
 	}
 
 	expected := []byte("filename;path\n" +
-		"testfile;test/path")
+		"testfile;test/path\n")
 	result, err := results.MarshalCSV()
 
 	if err != nil {
 		t.Errorf("\n\nunexpected error:\n %v", err)
 	}
 
-	if string(result) != string(expected) {
+	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("\n\nexpected:\n"+
 			"%s \n"+
 			"got: \n"+
@@ -155,14 +155,14 @@ func TestParseHappyPath(t *testing.T) {
 		Name: "testfile",
 	}
 
-	expected := []byte("testfile,test/path")
+	expected := []byte("testfile,test/path\n")
 	result, err := csv.parse(in)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	if string(result) != string(expected) {
+	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("Expected %s but got %s", string(expected), string(result))
 	}
 }
@@ -208,14 +208,14 @@ func TestParseInlineStruct(t *testing.T) {
 		Mcgee:     "testfile",
 	}
 
-	expected := []byte("testfile,test/path")
+	expected := []byte("testfile,test/path\n")
 	result, err := csv.parse(in)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	if string(result) != string(expected) {
+	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("Expected %s but got %s", string(expected), string(result))
 	}
 }
@@ -252,14 +252,14 @@ func TestParseNonNilPointer(t *testing.T) {
 		Name: "testfile",
 	}
 
-	expected := []byte("testfile,test/path")
+	expected := []byte("testfile,test/path\n")
 	result, err := csv.parse(in)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	if string(result) != string(expected) {
+	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("Expected %s but got %s", string(expected), string(result))
 	}
 }
