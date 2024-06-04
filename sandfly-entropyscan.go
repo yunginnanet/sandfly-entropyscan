@@ -251,27 +251,32 @@ type config struct {
 	results             *Results
 }
 
+var cfgOnce sync.Once
+
 func newConfigFromFlags() *config {
 	cfg := new(config)
-	flag.StringVar(&cfg.filePath, "file", "", "full path to a single file to analyze")
-	flag.StringVar(&cfg.dirPath, "dir", "", "directory name to analyze")
-	flag.StringVar(&cfg.delimChar, "delim", constDelimeterDefault, "delimeter for CSV output")
-	flag.StringVar(&cfg.outputFile, "output", "", "output file to write results to (default stdout) (only json and csv formats supported)")
 
-	flag.Float64Var(&cfg.entropyMaxVal, "entropy", 0, "show any file with entropy greater than or equal to this value (0.0 - 8.0 max 8.0, default is 0)")
+	cfgOnce.Do(func() {
+		flag.StringVar(&cfg.filePath, "file", "", "full path to a single file to analyze")
+		flag.StringVar(&cfg.dirPath, "dir", "", "directory name to analyze")
+		flag.StringVar(&cfg.delimChar, "delim", constDelimeterDefault, "delimeter for CSV output")
+		flag.StringVar(&cfg.outputFile, "output", "", "output file to write results to (default stdout) (only json and csv formats supported)")
 
-	flag.BoolVar(&cfg.elfOnly, "elf", false, "only check ELF executables")
-	flag.BoolVar(&cfg.procOnly, "proc", false, "check running processes")
-	flag.BoolVar(&cfg.csvOutput, "csv", false, "output results in CSV format (filename, path, entropy, elf_file [true|false], MD5, SHA1, SHA256, SHA512)")
-	flag.BoolVar(&cfg.jsonOutput, "json", false, "output results in JSON format")
-	flag.BoolVar(&cfg.printInterimResults, "print", false, "print interim results to stdout even if output file is specified")
-	flag.BoolVar(&cfg.version, "version", false, "show version and exit")
-	flag.BoolVar(&cfg.sumMD5, "md5", true, "calculate and show MD5 checksum of file(s)")
-	flag.BoolVar(&cfg.sumSHA1, "sha1", true, "calculate and show SHA1 checksum of file(s)")
-	flag.BoolVar(&cfg.sumSHA256, "sha256", true, "calculate and show SHA256 checksum of file(s)")
-	flag.BoolVar(&cfg.sumSHA512, "sha512", true, "calculate and show SHA512 checksum of file(s)")
+		flag.Float64Var(&cfg.entropyMaxVal, "entropy", 0, "show any file with entropy greater than or equal to this value (0.0 - 8.0 max 8.0, default is 0)")
 
-	flag.Parse()
+		flag.BoolVar(&cfg.elfOnly, "elf", false, "only check ELF executables")
+		flag.BoolVar(&cfg.procOnly, "proc", false, "check running processes")
+		flag.BoolVar(&cfg.csvOutput, "csv", false, "output results in CSV format (filename, path, entropy, elf_file [true|false], MD5, SHA1, SHA256, SHA512)")
+		flag.BoolVar(&cfg.jsonOutput, "json", false, "output results in JSON format")
+		flag.BoolVar(&cfg.printInterimResults, "print", false, "print interim results to stdout even if output file is specified")
+		flag.BoolVar(&cfg.version, "version", false, "show version and exit")
+		flag.BoolVar(&cfg.sumMD5, "md5", true, "calculate and show MD5 checksum of file(s)")
+		flag.BoolVar(&cfg.sumSHA1, "sha1", true, "calculate and show SHA1 checksum of file(s)")
+		flag.BoolVar(&cfg.sumSHA256, "sha256", true, "calculate and show SHA256 checksum of file(s)")
+		flag.BoolVar(&cfg.sumSHA512, "sha512", true, "calculate and show SHA512 checksum of file(s)")
+
+		flag.Parse()
+	})
 
 	switch {
 	case cfg.version:

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -261,5 +265,60 @@ func TestParseNonNilPointer(t *testing.T) {
 
 	if !strings.EqualFold(string(result), string(expected)) {
 		t.Errorf("Expected %s but got %s", string(expected), string(result))
+	}
+}
+
+func TestJSONCSVParityAndCheckOwnPID(t *testing.T) {
+	csv := defCSVHeader
+	cfg := newConfigFromFlags()
+	cfg.sumMD5 = true
+	cfg.sumSHA1 = true
+	cfg.sumSHA256 = true
+	cfg.sumSHA512 = true
+
+	myPID := os.Getpid()
+	procfsTarget := filepath.Join(constProcDir, strconv.Itoa(myPID), "/exe")
+	file, err := cfg.checkFilePath(procfsTarget)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var jDat []byte
+
+	if jDat, err = json.Marshal(file); err != nil {
+		t.Fatalf("unexpected json error: %v", err)
+	}
+
+	t.Logf("my PID json data: \n %s", string(jDat))
+
+	expected := [][]byte{
+		[]byte("filename,path,entropy,elf_file,md5,sha1,sha256,sha512\n"),
+		[]byte(file.Name + "," + file.Path + "," + strconv.FormatFloat(file.Entropy, 'f', -1, 64) + "," +
+			strconv.FormatBool(file.IsELF) + "," + file.Checksums.MD5 + "," + file.Checksums.SHA1 + "," +
+			file.Checksums.SHA256 + "," + file.Checksums.SHA512 + "\n"),
+	}
+
+	result, err := csv.parse(file)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !strings.EqualFold(string(result), string(expected[1])) {
+		t.Errorf("Expected %s but got %s", string(expected[1]), string(result))
+	}
+
+	results := NewResults()
+	results.Add(file)
+
+	result, err = results.MarshalCSV()
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	expectedJoined := bytes.Join(expected, []byte(""))
+
+	if !strings.EqualFold(string(result), string(expectedJoined)) {
+		t.Errorf("Expected %s but got %s", string(expectedJoined), string(result))
 	}
 }
