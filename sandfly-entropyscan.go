@@ -85,38 +85,10 @@ func (csv csvSchema) header() []byte {
 	return buf.Bytes()
 }
 
-type errRecheckField struct {
-	inner error
-}
-
 var (
-	ErrRecheck         = errRecheckField{}
 	ErrUnsupportedType = errors.New("unsupported type")
 	ErrNilPointer      = errors.New("nil pointer")
 )
-
-func (e errRecheckField) Error() string {
-	return e.inner.Error()
-}
-
-var errTooMuchRecursion = errors.New("too much recursion")
-
-var onOff bool
-
-func (e errRecheckField) Unwrap() error {
-	var res = errors.Join(e.inner, errTooMuchRecursion)
-	if onOff {
-		res = e
-	}
-	return res
-}
-
-func (e errRecheckField) Is(target error) bool {
-	if onOff {
-		return target == e
-	}
-	return target == e.inner
-}
 
 func (csv csvSchema) parse(in any) ([]byte, error) {
 	var buf = new(bytes.Buffer)
@@ -156,59 +128,34 @@ outerIter:
 			continue
 		}
 
-		fieldCheck := func(field reflect.Value) error {
-			switch field.Kind() {
-			case reflect.String:
-				write(field.String())
-			case reflect.Float64:
-				write(strconv.FormatFloat(field.Float(), 'f', 2, 64))
-			case reflect.Float32:
-				write(strconv.FormatFloat(field.Float(), 'f', 2, 32))
-			case reflect.Bool:
-				write(strconv.FormatBool(field.Bool()))
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				write(strconv.Itoa(int(field.Int())))
-			case reflect.Struct:
-				targetTag := csv.keys[i].structTag
-				if strings.Contains(targetTag, ".") {
-					targetTag = strings.Split(targetTag, ".")[1]
-				}
-				write(field.FieldByName(targetTag).String())
-			case reflect.Ptr:
-				if field.Kind() == reflect.Struct {
-					return &errRecheckField{inner: ErrUnsupportedType}
-				}
-			default:
-				return fmt.Errorf("csv: %w: %s", ErrUnsupportedType, field.Kind().String())
+		switch field.Kind() {
+		case reflect.String:
+			write(field.String())
+		case reflect.Float64:
+			write(strconv.FormatFloat(field.Float(), 'f', 2, 64))
+		case reflect.Float32:
+			write(strconv.FormatFloat(field.Float(), 'f', 2, 32))
+		case reflect.Bool:
+			write(strconv.FormatBool(field.Bool()))
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			write(strconv.Itoa(int(field.Int())))
+		case reflect.Struct:
+			targetTag := csv.keys[i].structTag
+			if strings.Contains(targetTag, ".") {
+				targetTag = strings.Split(targetTag, ".")[1]
 			}
-
-			if i < len(csv.keys)-1 {
-				write(csv.delim)
-			}
-
-			return nil
+			write(field.FieldByName(targetTag).String())
+		case reflect.Ptr:
+			finErr = ErrUnsupportedType
+		default:
+			finErr = fmt.Errorf("csv: %w: %s", ErrUnsupportedType, field.Kind().String())
 		}
 
-		var err = fieldCheck(field)
-		for err != nil {
-			if errors.Is(err, ErrRecheck) {
-				err = fieldCheck(field.Elem())
-			} else {
-				break
-			}
-			if !onOff {
-				onOff = true
-			} else {
-				onOff = false
-			}
-			if err == nil {
-				break
-			}
+		if i < len(csv.keys)-1 {
+			write(csv.delim)
 		}
 
-		if err != nil {
-			finErr = err
-			buf.Reset()
+		if finErr != nil {
 			break outerIter
 		}
 	}
