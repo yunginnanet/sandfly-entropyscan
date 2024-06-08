@@ -73,7 +73,7 @@ func TestResultChecksums(t *testing.T) {
 		if strings.TrimSpace(h) == "" {
 			t.Errorf("expected %s hash but got empty string", chkName)
 		}
-		t.Logf("%s: %s", chkName, h)
+		// t.Logf("%s: %s", chkName, h)
 	}
 
 	results.Add(yeet)

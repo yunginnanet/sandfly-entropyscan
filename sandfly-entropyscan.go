@@ -357,7 +357,12 @@ func main() {
 
 		// TODO: D.R.Y myself off, not to mention fix the reflection `onOff` mess
 
+		myPID := os.Getpid()
+
 		synchronous := func(pid int) {
+			if pid == myPID {
+				return
+			}
 			procfsTarget := filepath.Join(constProcDir, strconv.Itoa(pid), "/exe")
 			// Only check elf files which should be all these will be anyway.
 			file, err := cfg.checkFilePath(procfsTarget)
@@ -384,6 +389,9 @@ func main() {
 			printSync := &sync.Mutex{}
 
 			for pid := constMinPID; pid < constMaxPID; pid++ {
+				if pid == myPID {
+					continue
+				}
 				_ = workers.Submit(func() {
 					defer wg.Done()
 					procfsTarget := filepath.Join(constProcDir, strconv.Itoa(pid), "/exe")
