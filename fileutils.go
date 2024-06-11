@@ -41,8 +41,8 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -60,99 +60,137 @@ const (
 	constMagicNumElf = "7f454c46"
 )
 
-// Pass in a path and we'll see if the magic number is Linux ELF type.
-func IsElfType(path string) (isElf bool, err error) {
-	var hexData [constMagicNumRead]byte
-
-	if path == "" {
-		return false, fmt.Errorf("must provide a path to file to get ELF type")
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-
-	defer f.Close()
-
-	fStat, err := f.Stat()
-	if err != nil {
-		return false, err
-	}
-
-	// Not a regular file, so can't be ELF
-	if !fStat.Mode().IsRegular() {
-		return false, nil
-	}
-
-	// Too small to be ELF
-	if fStat.Size() < constMagicNumRead {
-		return false, nil
-	}
-
-	err = binary.Read(f, binary.LittleEndian, &hexData)
-	if err != nil {
-		return false, err
-	}
-
-	elfType, err := hex.DecodeString(constMagicNumElf)
-	if err != nil {
-		return false, err
-	}
-	if len(elfType) > constMagicNumRead {
-		return false, fmt.Errorf("elf magic number string is longer than magic number read bytes")
-	}
-
-	if bytes.Equal(hexData[:len(elfType)], elfType) {
-		return true, nil
-	}
-
-	return false, nil
+type ErrNotRegularFile struct {
+	Path string
 }
 
-// Calculates entropy of a file.
-func Entropy(path string) (entropy float64, err error) {
-	var size int64
+func (e *ErrNotRegularFile) Error() string {
+	return fmt.Sprintf("file '%s' is not a regular file", e.Path)
+}
 
+func NewErrNotRegularFile(path string) *ErrNotRegularFile {
+	return &ErrNotRegularFile{Path: path}
+}
+
+type ErrFileTooLarge struct {
+	Path string
+	Size int64
+	Max  int64
+}
+
+func (e *ErrFileTooLarge) Error() string {
+	return fmt.Sprintf("file size of '%s' is too large (%d bytes) to calculate entropy (max allowed: %d bytes)",
+		e.Path, e.Size, e.Max)
+}
+
+func NewErrFileTooLarge(path string, size int64) *ErrFileTooLarge {
+	return &ErrFileTooLarge{Path: path, Size: size, Max: constMaxFileSize}
+}
+
+var ErrNoPath = fmt.Errorf("no path provided")
+
+var elfType []byte
+
+func init() {
+	var err error
+	if elfType, err = hex.DecodeString(constMagicNumElf); err != nil {
+		// this should never happen
+		panic(fmt.Errorf("couldnjson't decode ELF magic number constant: %v", err))
+	}
+	if len(elfType) > constMagicNumRead {
+		// this should never happen
+		panic(fmt.Errorf("elf magic number string is longer than magic number read bytes"))
+	}
+}
+
+func preCheckFilepath(path string) (*os.File, int64, error) {
 	if path == "" {
-		return entropy, fmt.Errorf("must provide a path to file to get entropy")
+		return nil, 0, ErrNoPath
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, fmt.Errorf("couldn't open path (%s) to get entropy: %v", path, err)
+		return nil, 0, fmt.Errorf("couldn't open '%s': %v", path, err)
 	}
-	defer f.Close()
 
 	fStat, err := f.Stat()
 	if err != nil {
+		if f != nil {
+			_ = f.Close()
+		}
+		return f, 0, err
+	}
+
+	if !fStat.Mode().IsRegular() {
+		_ = f.Close()
+		return f, 0, NewErrNotRegularFile(path)
+	}
+
+	if fStat.Size() == 0 {
+		_ = f.Close()
+		return f, fStat.Size(), fmt.Errorf("file '%s' is zero size", path)
+	}
+
+	return f, fStat.Size(), nil
+}
+
+// IsElfType will reead the magic bytes from the passed file and determine if it is an ELF file.
+func IsElfType(path string) (isElf bool, err error) {
+	var fSize int64
+	var f io.ReadCloser
+
+	if f, fSize, err = preCheckFilepath(path); err != nil {
+		return false, err
+	}
+
+	defer func() {
+		_ = f.Close()
+	}()
+
+	// Too small to be ELF
+	if fSize < constMagicNumRead {
+		return false, fmt.Errorf("file '%s' is too small to be an ELF file", path)
+	}
+
+	var hexData [constMagicNumRead]byte
+
+	var n int
+	if n, err = f.Read(hexData[:]); err != nil {
+		return false, fmt.Errorf("couldn't read from '%s': %w", path, err)
+	}
+	if n != constMagicNumRead {
+		return false, fmt.Errorf("couldn't read enough bytes from '%s'", path)
+	}
+
+	return bytes.Equal(hexData[:len(elfType)], elfType), nil
+}
+
+// Entropy calculates entropy of a file.
+func Entropy(path string) (entropy float64, err error) {
+	var size int64
+	var f io.ReadCloser
+
+	if f, size, err = preCheckFilepath(path); err != nil {
 		return 0, err
 	}
 
-	if !fStat.Mode().IsRegular() {
-		return 0, fmt.Errorf("file (%s) is not a regular file to calculate entropy", path)
-	}
-
-	size = fStat.Size()
-	// Zero sized file is zero entropy.
-	if size == 0 {
-		return 0, nil
-	}
+	defer func() {
+		_ = f.Close()
+	}()
 
 	if size > int64(constMaxFileSize) {
-		return 0, fmt.Errorf("file size (%d) is too large to calculate entropy (max allowed: %d)",
-			size, int64(constMaxFileSize))
+		return 0, NewErrFileTooLarge(path, size)
 	}
 
 	dataBytes := make([]byte, constMaxEntropyChunk)
 	byteCounts := make([]int, 256)
 	for {
-		numBytesRead, err := f.Read(dataBytes)
-		if err == io.EOF {
+		numBytesRead, readErr := f.Read(dataBytes)
+		if errors.Is(readErr, io.EOF) {
 			break
 		}
-		if err != nil {
-			return 0, err
+		if readErr != nil {
+			return 0, readErr
 		}
 
 		// For each byte of the data that was read, increment the count
@@ -174,35 +212,20 @@ func Entropy(path string) (entropy float64, err error) {
 	return math.Round(entropy*100) / 100, nil
 }
 
-// Generates MD5 hash of a file
+// HashMD5 calculates the MD5 checksum of a file.
 func HashMD5(path string) (hash string, err error) {
-	if path == "" {
-		return hash, fmt.Errorf("must provide a path to file to hash")
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't open path (%s): %v", path, err)
-	}
-	defer f.Close()
-
-	fStat, err := f.Stat()
-	if err != nil {
+	var fSize int64
+	var f io.ReadCloser
+	if f, fSize, err = preCheckFilepath(path); err != nil {
 		return hash, err
 	}
 
-	if !fStat.Mode().IsRegular() {
-		return hash, fmt.Errorf("file (%s) is not a regular file to calculate hash", path)
-	}
+	defer func() {
+		_ = f.Close()
+	}()
 
-	// Zero sized file is no hash.
-	if fStat.Size() == 0 {
-		return hash, nil
-	}
-
-	if fStat.Size() > int64(constMaxFileSize) {
-		return hash, fmt.Errorf("file size (%d) is too large to calculate hash (max allowed: %d)",
-			fStat.Size(), int64(constMaxFileSize))
+	if fSize > int64(constMaxFileSize) {
+		return hash, NewErrFileTooLarge(path, fSize)
 	}
 
 	hashMD5 := md5.New()
@@ -216,35 +239,21 @@ func HashMD5(path string) (hash string, err error) {
 	return hash, nil
 }
 
-// Generates SHA1 hash of a file
+// HashSHA1 calculates the SHA1 checksum of a file.
 func HashSHA1(path string) (hash string, err error) {
-	if path == "" {
-		return hash, fmt.Errorf("must provide a path to file to hash")
-	}
+	var fSize int64
+	var f io.ReadCloser
 
-	f, err := os.Open(path)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't open path (%s): %v", path, err)
-	}
-	defer f.Close()
-
-	fStat, err := f.Stat()
-	if err != nil {
+	if f, fSize, err = preCheckFilepath(path); err != nil {
 		return hash, err
 	}
 
-	if !fStat.Mode().IsRegular() {
-		return hash, fmt.Errorf("file (%s) is not a regular file to calculate hash", path)
-	}
+	defer func() {
+		_ = f.Close()
+	}()
 
-	// Zero sized file is no hash.
-	if fStat.Size() == 0 {
-		return hash, nil
-	}
-
-	if fStat.Size() > int64(constMaxFileSize) {
-		return hash, fmt.Errorf("file size (%d) is too large to calculate hash (max allowed: %d)",
-			fStat.Size(), int64(constMaxFileSize))
+	if fSize > int64(constMaxFileSize) {
+		return hash, NewErrFileTooLarge(path, fSize)
 	}
 
 	hashSHA1 := sha1.New()
@@ -258,41 +267,27 @@ func HashSHA1(path string) (hash string, err error) {
 	return hash, nil
 }
 
-// Generates SHA256 hash of a file
+// HashSHA256 calculates the SHA256 checksum of a file.
 func HashSHA256(path string) (hash string, err error) {
-	if path == "" {
-		return hash, fmt.Errorf("must provide a path to file to hash")
-	}
+	var fSize int64
+	var f io.ReadCloser
 
-	f, err := os.Open(path)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't open path (%s): %v", path, err)
-	}
-	defer f.Close()
-
-	fStat, err := f.Stat()
-	if err != nil {
+	if f, fSize, err = preCheckFilepath(path); err != nil {
 		return hash, err
 	}
 
-	if !fStat.Mode().IsRegular() {
-		return hash, fmt.Errorf("file (%s) is not a regular file to calculate hash", path)
-	}
+	defer func() {
+		_ = f.Close()
+	}()
 
-	// Zero sized file is no hash.
-	if fStat.Size() == 0 {
-		return hash, nil
-	}
-
-	if fStat.Size() > int64(constMaxFileSize) {
-		return hash, fmt.Errorf("file size (%d) is too large to calculate hash (max allowed: %d)",
-			fStat.Size(), int64(constMaxFileSize))
+	if fSize > int64(constMaxFileSize) {
+		return hash, NewErrFileTooLarge(path, fSize)
 	}
 
 	hashSHA256 := sha256.New()
 	_, err = io.Copy(hashSHA256, f)
 	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA256 hash: %v", path, err)
+		return hash, fmt.Errorf("couldn't read '%s' to get SHA256 hash: %w", path, err)
 	}
 
 	hash = hex.EncodeToString(hashSHA256.Sum(nil))
@@ -300,35 +295,21 @@ func HashSHA256(path string) (hash string, err error) {
 	return hash, nil
 }
 
-// Generates SHA512 hash of a file
+// HashSHA512 calculates the SHA512 checksum of a file.
 func HashSHA512(path string) (hash string, err error) {
-	if path == "" {
-		return hash, fmt.Errorf("must provide a path to file to hash")
-	}
+	var fSize int64
+	var f io.ReadCloser
 
-	f, err := os.Open(path)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't open path (%s): %v", path, err)
-	}
-	defer f.Close()
-
-	fStat, err := f.Stat()
-	if err != nil {
+	if f, fSize, err = preCheckFilepath(path); err != nil {
 		return hash, err
 	}
 
-	if !fStat.Mode().IsRegular() {
-		return hash, fmt.Errorf("file (%s) is not a regular file to calculate hash", path)
-	}
+	defer func() {
+		_ = f.Close()
+	}()
 
-	// Zero sized file is no hash.
-	if fStat.Size() == 0 {
-		return hash, nil
-	}
-
-	if fStat.Size() > int64(constMaxFileSize) {
-		return hash, fmt.Errorf("file size (%d) is too large to calculate hash (max allowed: %d)",
-			fStat.Size(), int64(constMaxFileSize))
+	if fSize > int64(constMaxFileSize) {
+		return hash, NewErrFileTooLarge(path, fSize)
 	}
 
 	hashSHA512 := sha512.New()

@@ -322,3 +322,38 @@ func TestJSONCSVParityAndCheckOwnPID(t *testing.T) {
 		t.Errorf("Expected %s but got %s", string(expectedJoined), string(result))
 	}
 }
+
+func TestErroneous(t *testing.T) {
+	t.Run("IsElfType", func(t *testing.T) {
+		isElf, err := IsElfType("")
+		if err == nil {
+			t.Errorf("expected error on empty file passed, got nil")
+		}
+		if isElf {
+			t.Errorf("expected isElf == false on empty file passed, got true")
+		}
+		if isElf, err = IsElfType("/dev/nope"); err == nil {
+			t.Errorf("expected error on non-existent file passed, got nil")
+		}
+		if isElf {
+			t.Errorf("expected isElf == false on non-existent file passed, got true")
+		}
+		if isElf, err = IsElfType("/dev/null"); err == nil {
+			t.Errorf("expected error on non-regular file passed, got nil")
+		}
+		if isElf {
+			t.Errorf("expected isElf == false on non-regular file passed, got true")
+		}
+		smallFilePath := filepath.Join(t.TempDir(), "smol")
+		if err = os.WriteFile(smallFilePath, []byte{0x05}, 0644); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if isElf, err = IsElfType(smallFilePath); err == nil {
+			t.Errorf("expected error on small file passed, got nil")
+		}
+		if isElf {
+			t.Errorf("expected isElf == false on small file passed, got true")
+		}
+
+	})
+}
