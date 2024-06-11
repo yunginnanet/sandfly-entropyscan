@@ -423,7 +423,6 @@ func main() {
 
 		switch cfg.goFast {
 		case true:
-			fmt.Println("gotta go fast!")
 			hedgehog()
 		case false:
 			for pid := constMinPID; pid < constMaxPID; pid++ {
