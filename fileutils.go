@@ -95,7 +95,7 @@ func init() {
 	var err error
 	if elfType, err = hex.DecodeString(constMagicNumElf); err != nil {
 		// this should never happen
-		panic(fmt.Errorf("couldnjson't decode ELF magic number constant: %v", err))
+		panic(fmt.Errorf("couldn't decode ELF magic number constant: %w", err))
 	}
 	if len(elfType) > constMagicNumRead {
 		// this should never happen
@@ -110,7 +110,7 @@ func preCheckFilepath(path string) (*os.File, int64, error) {
 
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0, fmt.Errorf("couldn't open '%s': %v", path, err)
+		return nil, 0, fmt.Errorf("couldn't open '%s': %w", path, err)
 	}
 
 	fStat, err := f.Stat()
@@ -231,7 +231,7 @@ func HashMD5(path string) (hash string, err error) {
 	hashMD5 := md5.New()
 	_, err = io.Copy(hashMD5, f)
 	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get MD5 hash: %v", path, err)
+		return hash, fmt.Errorf("couldn't read path (%s) to get MD5 hash: %w", path, err)
 	}
 
 	hash = hex.EncodeToString(hashMD5.Sum(nil))
@@ -259,7 +259,7 @@ func HashSHA1(path string) (hash string, err error) {
 	hashSHA1 := sha1.New()
 	_, err = io.Copy(hashSHA1, f)
 	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA1 hash: %v", path, err)
+		return hash, fmt.Errorf("couldn't read path (%s) to get SHA1 hash: %w", path, err)
 	}
 
 	hash = hex.EncodeToString(hashSHA1.Sum(nil))
@@ -315,7 +315,7 @@ func HashSHA512(path string) (hash string, err error) {
 	hashSHA512 := sha512.New()
 	_, err = io.Copy(hashSHA512, f)
 	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA512 hash: %v", path, err)
+		return hash, fmt.Errorf("couldn't read path (%s) to get SHA512 hash: %w", path, err)
 	}
 
 	hash = hex.EncodeToString(hashSHA512.Sum(nil))
