@@ -1,4 +1,4 @@
-// Sandfly Security Linux Entropy Scanning Utility
+// Sandfly Security Linux FileEntropy Scanning Utility
 package main
 
 /*
@@ -503,66 +503,13 @@ func (cfg *config) printResults(file *File) {
 	}
 }
 
-type hasher struct {
-	enabled bool
-	target  *string
-	f       func(string) (string, error)
-}
-
-func (h hasher) sum(file *File) error {
-	if !h.enabled {
-		return nil
-	}
-	var res string
-	var err error
-	if res, err = h.f(file.Path); err == nil {
-		*h.target = res
-	}
-	if err != nil {
-		return fmt.Errorf("error calculating checksum for file (%s): %w", file.Path, err)
-	}
-	return nil
-}
-
-func (cfg *config) runEnabledHashers(file *File) error {
-	wg := new(sync.WaitGroup)
-
-	if file.Checksums == nil {
-		file.Checksums = new(Checksums)
-	}
-
-	do := []hasher{
-		{cfg.sumMD5, &file.Checksums.MD5, HashMD5},
-		{cfg.sumSHA1, &file.Checksums.SHA1, HashSHA1},
-		{cfg.sumSHA256, &file.Checksums.SHA256, HashSHA256},
-		{cfg.sumSHA512, &file.Checksums.SHA512, HashSHA512},
-	}
-	wg.Add(len(do))
-	var errs = make(chan error, len(do))
-	for _, v := range do {
-		go func(chk hasher, fi *File, vwg *sync.WaitGroup) {
-			errs <- chk.sum(fi)
-			vwg.Done()
-		}(v, file, wg)
-	}
-	wg.Wait()
-	close(errs)
-	var errsSlice = make([]error, 0, len(do))
-	for e := range errs {
-		if e != nil {
-			errsSlice = append(errsSlice, e)
-		}
-	}
-	return errors.Join(errsSlice...)
-}
-
 func (cfg *config) checkFilePath(filePath string) (file *File, err error) {
 	file = new(File)
 	file.Checksums = new(Checksums)
 
 	file.Path = filePath
 
-	if file.IsELF, err = IsElfType(filePath); err != nil {
+	if file.IsELF, err = IsFileElf(filePath); err != nil {
 		return file, err
 	}
 
@@ -581,7 +528,7 @@ func (cfg *config) checkFilePath(filePath string) (file *File, err error) {
 		return &File{}, nil
 	case !cfg.elfOnly || (cfg.elfOnly && file.IsELF):
 		var entropy float64
-		if entropy, err = Entropy(filePath); err != nil {
+		if entropy, err = FileEntropy(filePath); err != nil {
 			log.Fatalf("error calculating entropy for file (%s): %v\n", filePath, err)
 		}
 		file.Entropy = entropy

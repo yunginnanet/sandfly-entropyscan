@@ -37,10 +37,6 @@ Author: @SandflySecurity
 
 import (
 	"bytes"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -134,8 +130,8 @@ func preCheckFilepath(path string) (*os.File, int64, error) {
 	return f, fStat.Size(), nil
 }
 
-// IsElfType will reead the magic bytes from the passed file and determine if it is an ELF file.
-func IsElfType(path string) (isElf bool, err error) {
+// IsFileElf will reead the magic bytes from the passed file and determine if it is an ELF file.
+func IsFileElf(path string) (isElf bool, err error) {
 	var fSize int64
 	var f io.ReadCloser
 
@@ -152,36 +148,24 @@ func IsElfType(path string) (isElf bool, err error) {
 		return false, fmt.Errorf("file '%s' is too small to be an ELF file", path)
 	}
 
+	return IsElf(f)
+}
+
+func IsElf(f io.Reader) (isElf bool, err error) {
 	var hexData [constMagicNumRead]byte
 
 	var n int
 	if n, err = f.Read(hexData[:]); err != nil {
-		return false, fmt.Errorf("couldn't read from '%s': %w", path, err)
+		return false, fmt.Errorf("read failure during ELF check: %w", err)
 	}
 	if n != constMagicNumRead {
-		return false, fmt.Errorf("couldn't read enough bytes from '%s'", path)
+		return false, fmt.Errorf("%w: undersized read during ELF check", io.ErrUnexpectedEOF)
 	}
 
 	return bytes.Equal(hexData[:len(elfType)], elfType), nil
 }
 
-// Entropy calculates entropy of a file.
-func Entropy(path string) (entropy float64, err error) {
-	var size int64
-	var f io.ReadCloser
-
-	if f, size, err = preCheckFilepath(path); err != nil {
-		return 0, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if size > int64(constMaxFileSize) {
-		return 0, NewErrFileTooLarge(path, size)
-	}
-
+func Entropy(f io.Reader, size int64) (entropy float64, err error) {
 	dataBytes := make([]byte, constMaxEntropyChunk)
 	byteCounts := make([]int, 256)
 	for {
@@ -212,113 +196,22 @@ func Entropy(path string) (entropy float64, err error) {
 	return math.Round(entropy*100) / 100, nil
 }
 
-// HashMD5 calculates the MD5 checksum of a file.
-func HashMD5(path string) (hash string, err error) {
-	var fSize int64
+// FileEntropy calculates entropy of a file.
+func FileEntropy(path string) (entropy float64, err error) {
+	var size int64
 	var f io.ReadCloser
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
+
+	if f, size, err = preCheckFilepath(path); err != nil {
+		return 0, err
 	}
 
 	defer func() {
 		_ = f.Close()
 	}()
 
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
+	if size > int64(constMaxFileSize) {
+		return 0, NewErrFileTooLarge(path, size)
 	}
 
-	hashMD5 := md5.New()
-	_, err = io.Copy(hashMD5, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get MD5 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashMD5.Sum(nil))
-
-	return hash, nil
-}
-
-// HashSHA1 calculates the SHA1 checksum of a file.
-func HashSHA1(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashSHA1 := sha1.New()
-	_, err = io.Copy(hashSHA1, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA1 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashSHA1.Sum(nil))
-
-	return hash, nil
-}
-
-// HashSHA256 calculates the SHA256 checksum of a file.
-func HashSHA256(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashSHA256 := sha256.New()
-	_, err = io.Copy(hashSHA256, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read '%s' to get SHA256 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashSHA256.Sum(nil))
-
-	return hash, nil
-}
-
-// HashSHA512 calculates the SHA512 checksum of a file.
-func HashSHA512(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashSHA512 := sha512.New()
-	_, err = io.Copy(hashSHA512, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA512 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashSHA512.Sum(nil))
-
-	return hash, nil
+	return Entropy(f, size)
 }

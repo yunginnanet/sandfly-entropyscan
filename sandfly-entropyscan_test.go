@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -324,21 +325,21 @@ func TestJSONCSVParityAndCheckOwnPID(t *testing.T) {
 }
 
 func TestErroneous(t *testing.T) {
-	t.Run("IsElfType", func(t *testing.T) {
-		isElf, err := IsElfType("")
+	t.Run("IsFileElf", func(t *testing.T) {
+		isElf, err := IsFileElf("")
 		if err == nil {
 			t.Errorf("expected error on empty file passed, got nil")
 		}
 		if isElf {
 			t.Errorf("expected isElf == false on empty file passed, got true")
 		}
-		if isElf, err = IsElfType("/dev/nope"); err == nil {
+		if isElf, err = IsFileElf("/dev/nope"); err == nil {
 			t.Errorf("expected error on non-existent file passed, got nil")
 		}
 		if isElf {
 			t.Errorf("expected isElf == false on non-existent file passed, got true")
 		}
-		if isElf, err = IsElfType("/dev/null"); err == nil {
+		if isElf, err = IsFileElf("/dev/null"); err == nil {
 			t.Errorf("expected error on non-regular file passed, got nil")
 		}
 		if isElf {
@@ -348,7 +349,7 @@ func TestErroneous(t *testing.T) {
 		if err = os.WriteFile(smallFilePath, []byte{0x05}, 0644); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if isElf, err = IsElfType(smallFilePath); err == nil {
+		if isElf, err = IsFileElf(smallFilePath); err == nil {
 			t.Errorf("expected error on small file passed, got nil")
 		}
 		if isElf {
@@ -356,4 +357,17 @@ func TestErroneous(t *testing.T) {
 		}
 
 	})
+}
+
+func TestIsElf(t *testing.T) {
+	IAmElf := runtime.GOOS == "linux"
+	myPID := os.Getpid()
+	procfsTarget := filepath.Join(constProcDir, strconv.Itoa(myPID), "/exe")
+	isElf, err := IsFileElf(procfsTarget)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isElf != IAmElf {
+		t.Errorf("expected self pid isElf == %t, got %t", IAmElf, isElf)
+	}
 }
