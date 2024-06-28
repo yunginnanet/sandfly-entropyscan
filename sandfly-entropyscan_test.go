@@ -50,56 +50,114 @@ func TestResultChecksums(t *testing.T) {
 		Checksums: new(Checksums),
 	}
 
-	results := NewResults()
+	t.Run("all", func(t *testing.T) {
+		results := NewResults()
 
-	cfg := newConfigFromFlags()
-	cfg.sumMD5 = true
-	cfg.sumSHA1 = true
-	cfg.sumSHA256 = true
-	cfg.sumSHA512 = true
-	if err = cfg.runEnabledHashers(yeet); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		cfg := newConfigFromFlags()
+		cfg.hashers = []HashType{HashTypeMD5, HashTypeSHA1, HashTypeSHA256, HashTypeSHA512}
 
-	for i, h := range []string{yeet.Checksums.MD5, yeet.Checksums.SHA1, yeet.Checksums.SHA256, yeet.Checksums.SHA512} {
-		chkName := "md5"
-		switch i {
-		case 1:
-			chkName = "sha1"
-		case 2:
-			chkName = "sha256"
-		case 3:
-			chkName = "sha512"
+		if err = cfg.runEnabledHashers(yeet); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if strings.TrimSpace(h) == "" {
-			t.Errorf("expected %s hash but got empty string", chkName)
+
+		for i, h := range []string{yeet.Checksums.MD5, yeet.Checksums.SHA1, yeet.Checksums.SHA256, yeet.Checksums.SHA512} {
+			chkName := "md5"
+			switch i {
+			case 1:
+				chkName = "sha1"
+			case 2:
+				chkName = "sha256"
+			case 3:
+				chkName = "sha512"
+			}
+			if strings.TrimSpace(h) == "" {
+				t.Errorf("expected %s hash but got empty string", chkName)
+			}
+			// t.Logf("%s: %s", chkName, h)
 		}
-		// t.Logf("%s: %s", chkName, h)
-	}
 
-	results.Add(yeet)
+		results.Add(yeet)
 
-	expected := []byte("filename,path,entropy,elf_file,md5,sha1,sha256,sha512\n" +
-		"yeet," + path + "," + "0.50,false," + yeet.Checksums.MD5 + "," +
-		yeet.Checksums.SHA1 + "," + yeet.Checksums.SHA256 + "," +
-		yeet.Checksums.SHA512 + "\n",
-	)
+		t.Run("csv", func(t *testing.T) {
+			expected := []byte("filename,path,entropy,elf_file,md5,sha1,sha256,sha512\n" +
+				"yeet," + path + "," + "0.50,false," + yeet.Checksums.MD5 + "," +
+				yeet.Checksums.SHA1 + "," + yeet.Checksums.SHA256 + "," +
+				yeet.Checksums.SHA512 + "\n",
+			)
 
-	result, err := results.MarshalCSV()
+			result, err := results.MarshalCSV()
 
-	if err != nil {
-		t.Errorf("\n\nunexpected error:\n %v", err)
-	}
+			if err != nil {
+				t.Errorf("\n\nunexpected error:\n %v", err)
+			}
 
-	if !strings.EqualFold(string(result), string(expected)) {
-		t.Errorf("\n\nexpected:\n"+
-			"%s \n"+
-			"got: \n"+
-			"%s\n\n",
-			string(expected),
-			string(result),
-		)
-	}
+			if !strings.EqualFold(string(result), string(expected)) {
+				t.Errorf("\n\nexpected:\n"+
+					"%s \n"+
+					"got: \n"+
+					"%s\n\n",
+					string(expected),
+					string(result),
+				)
+			}
+		})
+	})
+
+	t.Run("some", func(t *testing.T) {
+		yeet.Checksums = new(Checksums)
+		results := NewResults()
+
+		cfg := newConfigFromFlags()
+		cfg.hashers = []HashType{HashTypeMD5, HashTypeSHA1}
+
+		if err = cfg.runEnabledHashers(yeet); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for i, h := range []string{yeet.Checksums.MD5, yeet.Checksums.SHA1, yeet.Checksums.SHA256, yeet.Checksums.SHA512} {
+			chkName := "md5"
+			switch i {
+			case 1:
+				chkName = "sha1"
+			case 2:
+				chkName = "sha256"
+			case 3:
+				chkName = "sha512"
+			}
+			if (i < 2) && strings.TrimSpace(h) == "" {
+				t.Errorf("expected %s hash but got empty string", chkName)
+			}
+			if i > 2 && strings.TrimSpace(h) != "" {
+				t.Errorf("expected empty string but got %s", h)
+			}
+		}
+
+		results.Add(yeet)
+
+		t.Run("csv", func(t *testing.T) {
+			expected := []byte("filename,path,entropy,elf_file,md5,sha1,sha256,sha512\n" +
+				"yeet," + path + "," + "0.50,false," + yeet.Checksums.MD5 + "," +
+				yeet.Checksums.SHA1 + "," + "" + "," +
+				"" + "\n",
+			)
+
+			result, err := results.MarshalCSV()
+
+			if err != nil {
+				t.Errorf("\n\nunexpected error:\n %v", err)
+			}
+
+			if !strings.EqualFold(string(result), string(expected)) {
+				t.Errorf("\n\nexpected:\n"+
+					"%s \n"+
+					"got: \n"+
+					"%s\n\n",
+					string(expected),
+					string(result),
+				)
+			}
+		})
+	})
 }
 
 func TestResultsCustomSchema(t *testing.T) {
@@ -272,10 +330,7 @@ func TestParseNonNilPointer(t *testing.T) {
 func TestJSONCSVParityAndCheckOwnPID(t *testing.T) {
 	csv := defCSVHeader
 	cfg := newConfigFromFlags()
-	cfg.sumMD5 = true
-	cfg.sumSHA1 = true
-	cfg.sumSHA256 = true
-	cfg.sumSHA512 = true
+	cfg.hashers = []HashType{HashTypeMD5, HashTypeSHA1, HashTypeSHA256, HashTypeSHA512}
 
 	myPID := os.Getpid()
 	procfsTarget := filepath.Join(constProcDir, strconv.Itoa(myPID), "/exe")

@@ -9,5 +9,8 @@ fmt :
 check :
 	go vet ./...
 
+test : check
+	go test -v ./...
+
 clean :
 	rm sandfly-entropyscan || true

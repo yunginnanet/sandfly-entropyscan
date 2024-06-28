@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -10,9 +11,13 @@ import (
 	"hash"
 	"io"
 	"sync"
+
+	"git.tcp.direct/kayos/common/pool"
 )
 
 type HashType uint8
+
+var bufs = pool.NewBufferFactory()
 
 const (
 	HashNull HashType = iota
@@ -81,26 +86,43 @@ func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 	var (
 		res   = make(map[HashType]string, len(m.todo))
 		errCh = make(chan error, len(m.todo))
+		errs  = make([]error, 0, len(m.todo))
 		mu    sync.Mutex
 	)
+
+	bigBuf := bufs.Get()
+	defer bufs.MustPut(bigBuf)
+
+	fileN, readErr := bigBuf.ReadFrom(r)
+	if readErr != nil && (!errors.Is(readErr, io.EOF) && fileN != 0) {
+		return nil, readErr
+	}
+	if fileN == 0 {
+		return nil, errors.New("no data read")
+	}
+
+	// we avoid reading directly from the reader incase it needs a rewind and avoid
+	// repeating potential disk reads by reading once into bigBuf and creating
+	// [bytes.Reader] instances from it's internal []byte slice within the goroutines.
+	bufRaw := bigBuf.Bytes()
 
 	wg := new(sync.WaitGroup)
 	wg.Add(len(m.todo))
 
 	for _, ht := range m.todo {
 		go func(myHt HashType, myWg *sync.WaitGroup) {
+			defer myWg.Done()
 			f, ok := HashEngines[myHt]
 			if !ok {
-				panic("hash engine not found: " + ht.String())
+				panic("hash engine not found: " + myHt.String())
 			}
 			h := f()
-			defer myWg.Done()
 			buf := getBuf()
 			defer putBuf(buf)
-			n, err := io.CopyBuffer(h, r, buf)
+			n, err := io.CopyBuffer(h, bytes.NewReader(bufRaw), buf)
 			if err != nil || n == 0 {
 				if err == nil {
-					err = errors.New("no data written")
+					err = errors.New(myHt.String() + ": no data written")
 				}
 				errCh <- err
 				return
@@ -113,7 +135,15 @@ func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 
 	wg.Wait()
 
-	return res, nil
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return res, errors.Join(errs...)
 }
 
 func (m *MultiHasher) HashFile(path string) (map[HashType]string, error) {
