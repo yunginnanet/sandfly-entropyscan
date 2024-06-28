@@ -7,7 +7,6 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"hash"
 	"io"
 	"sync"
@@ -27,11 +26,26 @@ type HashResult struct {
 	Type HashType
 }
 
-var HashFuncs = map[HashType]func() hash.Hash{
+var HashEngines = map[HashType]func() hash.Hash{
 	HashTypeMD5:    md5.New,
 	HashTypeSHA1:   sha1.New,
 	HashTypeSHA256: sha256.New,
 	HashTypeSHA512: sha512.New,
+}
+
+func (h HashType) String() string {
+	switch h {
+	case HashTypeMD5:
+		return "md5"
+	case HashTypeSHA1:
+		return "sha1"
+	case HashTypeSHA256:
+		return "sha256"
+	case HashTypeSHA512:
+		return "sha512"
+	default:
+		return "unknown"
+	}
 }
 
 var hashBufs = sync.Pool{
@@ -63,22 +77,24 @@ func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 	if len(m.todo) == 0 {
 		return nil, errors.New("no hash types specified")
 	}
-	var res = make(map[HashType]string, len(m.todo))
-	hashers := make([]hash.Hash, 0, len(m.todo))
 
-	for _, v := range m.todo {
-		f, ok := HashFuncs[v]
-		if !ok {
-			return res, fmt.Errorf("hash type (%d) not supported", v)
-		}
-		hashers = append(hashers, f())
-	}
-	var errCh = make(chan error, len(m.todo))
+	var (
+		res   = make(map[HashType]string, len(m.todo))
+		errCh = make(chan error, len(m.todo))
+		mu    sync.Mutex
+	)
+
 	wg := new(sync.WaitGroup)
 	wg.Add(len(m.todo))
-	for _, h := range hashers {
-		go func(h hash.Hash, w *sync.WaitGroup) {
-			defer w.Done()
+
+	for _, ht := range m.todo {
+		go func(myHt HashType, myWg *sync.WaitGroup) {
+			f, ok := HashEngines[myHt]
+			if !ok {
+				panic("hash engine not found: " + ht.String())
+			}
+			h := f()
+			defer myWg.Done()
 			buf := getBuf()
 			defer putBuf(buf)
 			n, err := io.CopyBuffer(h, r, buf)
@@ -89,8 +105,10 @@ func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 				errCh <- err
 				return
 			}
-			res[HashTypeMD5] = hex.EncodeToString(h.Sum(nil))
-		}(h, wg)
+			mu.Lock()
+			res[myHt] = hex.EncodeToString(h.Sum(nil))
+			mu.Unlock()
+		}(ht, wg)
 	}
 
 	wg.Wait()
@@ -98,166 +116,39 @@ func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 	return res, nil
 }
 
-// HashMD5 calculates the MD5 checksum of a file.
-func HashMD5(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashMD5 := md5.New()
-	_, err = io.Copy(hashMD5, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get MD5 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashMD5.Sum(nil))
-
-	return hash, nil
-}
-
-// HashSHA1 calculates the SHA1 checksum of a file.
-func HashSHA1(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashSHA1 := sha1.New()
-	_, err = io.Copy(hashSHA1, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA1 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashSHA1.Sum(nil))
-
-	return hash, nil
-}
-
-// HashSHA256 calculates the SHA256 checksum of a file.
-func HashSHA256(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashSHA256 := sha256.New()
-	_, err = io.Copy(hashSHA256, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read '%s' to get SHA256 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashSHA256.Sum(nil))
-
-	return hash, nil
-}
-
-// HashSHA512 calculates the SHA512 checksum of a file.
-func HashSHA512(path string) (hash string, err error) {
-	var fSize int64
-	var f io.ReadCloser
-
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hash, err
-	}
-
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if fSize > int64(constMaxFileSize) {
-		return hash, NewErrFileTooLarge(path, fSize)
-	}
-
-	hashSHA512 := sha512.New()
-	_, err = io.Copy(hashSHA512, f)
-	if err != nil {
-		return hash, fmt.Errorf("couldn't read path (%s) to get SHA512 hash: %w", path, err)
-	}
-
-	hash = hex.EncodeToString(hashSHA512.Sum(nil))
-
-	return hash, nil
-}
-
-type fileHasher struct {
-	enabled bool
-	target  *string
-	f       func(string) (string, error)
-}
-
-func (h fileHasher) hash(file *File) error {
-	if !h.enabled {
-		return nil
-	}
-	var res string
+func (m *MultiHasher) HashFile(path string) (map[HashType]string, error) {
 	var err error
-	if res, err = h.f(file.Path); err == nil {
-		*h.target = res
+	var fSize int64
+	var f io.ReadCloser
+	var hashResults = make(map[HashType]string, len(m.todo))
+	if f, fSize, err = preCheckFilepath(path); err != nil {
+		return hashResults, err
 	}
-	if err != nil {
-		return fmt.Errorf("error calculating checksum for file (%s): %w", file.Path, err)
+
+	defer func() {
+		_ = f.Close()
+	}()
+
+	if fSize > int64(constMaxFileSize) {
+		return hashResults, NewErrFileTooLarge(path, fSize)
 	}
-	return nil
+
+	return m.Hash(f)
 }
 
 func (cfg *config) runEnabledHashers(file *File) error {
-	wg := new(sync.WaitGroup)
-
 	if file.Checksums == nil {
 		file.Checksums = new(Checksums)
 	}
 
-	do := []fileHasher{
-		{cfg.sumMD5, &file.Checksums.MD5, HashMD5},
-		{cfg.sumSHA1, &file.Checksums.SHA1, HashSHA1},
-		{cfg.sumSHA256, &file.Checksums.SHA256, HashSHA256},
-		{cfg.sumSHA512, &file.Checksums.SHA512, HashSHA512},
+	mh := NewMultiHasher(cfg.hashers...)
+
+	results, err := mh.HashFile(file.Path)
+	if err != nil {
+		return err
 	}
-	wg.Add(len(do))
-	var errs = make(chan error, len(do))
-	for _, v := range do {
-		go func(chk fileHasher, fi *File, vwg *sync.WaitGroup) {
-			errs <- chk.hash(fi)
-			vwg.Done()
-		}(v, file, wg)
+	for ht, res := range results {
+		file.Checksums.Set(ht, res)
 	}
-	wg.Wait()
-	close(errs)
-	var errsSlice = make([]error, 0, len(do))
-	for e := range errs {
-		if e != nil {
-			errsSlice = append(errsSlice, e)
-		}
-	}
-	return errors.Join(errsSlice...)
+	return nil
 }

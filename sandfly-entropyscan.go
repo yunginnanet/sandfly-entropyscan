@@ -232,6 +232,41 @@ type Checksums struct {
 	SHA1   string `json:"sha1"`
 	SHA256 string `json:"sha256"`
 	SHA512 string `json:"sha512"`
+	mu     sync.RWMutex
+}
+
+func (c *Checksums) Get(ht HashType) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	switch ht {
+	case HashTypeMD5:
+		return c.MD5
+	case HashTypeSHA1:
+		return c.SHA1
+	case HashTypeSHA256:
+		return c.SHA256
+	case HashTypeSHA512:
+		return c.SHA512
+	default:
+		return ""
+	}
+}
+
+func (c *Checksums) Set(ht HashType, val string) {
+	c.mu.Lock()
+	switch ht {
+	case HashTypeMD5:
+		c.MD5 = val
+	case HashTypeSHA1:
+		c.SHA1 = val
+	case HashTypeSHA256:
+		c.SHA256 = val
+	case HashTypeSHA512:
+		c.SHA512 = val
+	default:
+		panic("unknown hash type")
+	}
+	c.mu.Unlock()
 }
 
 type config struct {
@@ -246,10 +281,7 @@ type config struct {
 	printInterimResults bool
 	outputFile          string
 	version             bool
-	sumMD5              bool
-	sumSHA1             bool
-	sumSHA256           bool
-	sumSHA512           bool
+	hashers             []HashType
 	results             *Results
 	goFast              bool
 }
@@ -258,6 +290,16 @@ var cfgOnce sync.Once
 
 func newConfigFromFlags() *config {
 	cfg := new(config)
+	cfg.hashers = make([]HashType, 0, 4)
+
+	sumMD5, sumSHA1, sumSHA256, sumSHA512 := true, true, true, true
+
+	var hashAlgos = map[*bool]HashType{
+		&sumMD5:    HashTypeMD5,
+		&sumSHA1:   HashTypeSHA1,
+		&sumSHA256: HashTypeSHA256,
+		&sumSHA512: HashTypeSHA512,
+	}
 
 	cfgOnce.Do(func() {
 		flag.StringVar(&cfg.filePath, "file", "", "full path to a single file to analyze")
@@ -273,14 +315,20 @@ func newConfigFromFlags() *config {
 		flag.BoolVar(&cfg.jsonOutput, "json", false, "output results in JSON format")
 		flag.BoolVar(&cfg.printInterimResults, "print", false, "print interim results to stdout even if output file is specified")
 		flag.BoolVar(&cfg.version, "version", false, "show version and exit")
-		flag.BoolVar(&cfg.sumMD5, "md5", true, "calculate and show MD5 checksum of file(s)")
-		flag.BoolVar(&cfg.sumSHA1, "sha1", true, "calculate and show SHA1 checksum of file(s)")
-		flag.BoolVar(&cfg.sumSHA256, "sha256", true, "calculate and show SHA256 checksum of file(s)")
-		flag.BoolVar(&cfg.sumSHA512, "sha512", true, "calculate and show SHA512 checksum of file(s)")
+		flag.BoolVar(&sumMD5, "md5", true, "calculate and show MD5 checksum of file(s)")
+		flag.BoolVar(&sumSHA1, "sha1", true, "calculate and show SHA1 checksum of file(s)")
+		flag.BoolVar(&sumSHA256, "sha256", true, "calculate and show SHA256 checksum of file(s)")
+		flag.BoolVar(&sumSHA512, "sha512", true, "calculate and show SHA512 checksum of file(s)")
 
 		flag.BoolVar(&cfg.goFast, "fast", false, "use worker pool for concurrent file processing (experimental)")
 
 		flag.Parse()
+
+		for k, v := range hashAlgos {
+			if *k {
+				cfg.hashers = append(cfg.hashers, v)
+			}
+		}
 	})
 
 	switch {
@@ -487,17 +535,8 @@ func (cfg *config) printResults(file *File) {
 			file.Entropy,
 			file.IsELF,
 		)
-		if cfg.sumMD5 {
-			str += "md5: " + file.Checksums.MD5 + "\n"
-		}
-		if cfg.sumSHA1 {
-			str += "sha1: " + file.Checksums.SHA1 + "\n"
-		}
-		if cfg.sumSHA256 {
-			str += "sha256: " + file.Checksums.SHA256 + "\n"
-		}
-		if cfg.sumSHA512 {
-			str += "sha512: " + file.Checksums.SHA512 + "\n"
+		for _, ht := range cfg.hashers {
+			str += fmt.Sprintf("%s: %s\n", ht.String(), file.Checksums.Get(ht))
 		}
 		fmt.Print(str + "\n")
 	}
