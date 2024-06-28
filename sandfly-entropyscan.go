@@ -438,6 +438,7 @@ func main() {
 
 			for pid := constMinPID; pid < constMaxPID; pid++ {
 				if pid == myPID {
+					wg.Done()
 					continue
 				}
 				_ = workers.Submit(func() {
