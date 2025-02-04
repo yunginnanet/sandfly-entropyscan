@@ -43,6 +43,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sync"
 )
 
 const (
@@ -165,8 +166,14 @@ func IsElf(f io.Reader) (isElf bool, err error) {
 	return bytes.Equal(hexData[:len(elfType)], elfType), nil
 }
 
+var chunkPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, constMaxEntropyChunk)
+	},
+}
+
 func Entropy(f io.Reader, size int64) (entropy float64, err error) {
-	dataBytes := make([]byte, constMaxEntropyChunk)
+	dataBytes := chunkPool.Get().([]byte)
 	byteCounts := make([]int, 256)
 	for {
 		numBytesRead, readErr := f.Read(dataBytes)
@@ -174,6 +181,7 @@ func Entropy(f io.Reader, size int64) (entropy float64, err error) {
 			break
 		}
 		if readErr != nil {
+			chunkPool.Put(dataBytes)
 			return 0, readErr
 		}
 
@@ -191,6 +199,8 @@ func Entropy(f io.Reader, size int64) (entropy float64, err error) {
 			entropy += -px * math.Log2(px)
 		}
 	}
+
+	chunkPool.Put(dataBytes)
 
 	// Returns rounded to nearest two decimals.
 	return math.Round(entropy*100) / 100, nil
