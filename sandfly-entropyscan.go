@@ -284,6 +284,7 @@ type config struct {
 	hashers             []HashType
 	results             *Results
 	goFast              bool
+	ignoreSelf          bool
 }
 
 var cfgOnce sync.Once
@@ -322,6 +323,8 @@ func newConfigFromFlags() *config {
 
 		flag.BoolVar(&cfg.goFast, "fast", false, "use worker pool for concurrent file processing (experimental)")
 
+		flag.BoolVar(&cfg.ignoreSelf, "ignore-self", true, "ignore self process")
+
 		flag.Parse()
 
 		for k, v := range hashAlgos {
@@ -347,6 +350,33 @@ func newConfigFromFlags() *config {
 	return cfg
 }
 
+func (cfg *config) output() {
+	var res []byte
+	switch {
+	case cfg.csvOutput:
+		var err error
+		if res, err = cfg.results.MarshalCSV(); err != nil {
+			log.Fatal(err.Error())
+		}
+	case cfg.jsonOutput:
+		var err error
+		if res, err = json.Marshal(cfg.results); err != nil {
+			log.Fatal(err.Error())
+		}
+	default:
+	}
+	if len(res) > 0 {
+		switch {
+		case cfg.outputFile != "":
+			if err := os.WriteFile(cfg.outputFile, res, 0644); err != nil {
+				log.Fatal(err.Error())
+			}
+		default:
+			_, _ = os.Stdout.Write(res)
+		}
+	}
+}
+
 func main() {
 	cfg := newConfigFromFlags()
 
@@ -365,32 +395,7 @@ func main() {
 		log.Fatal("csv and json output options are mutually exclusive")
 	}
 
-	defer func() {
-		var res []byte
-		switch {
-		case cfg.csvOutput:
-			var err error
-			if res, err = cfg.results.MarshalCSV(); err != nil {
-				log.Fatal(err.Error())
-			}
-		case cfg.jsonOutput:
-			var err error
-			if res, err = json.Marshal(cfg.results); err != nil {
-				log.Fatal(err.Error())
-			}
-		default:
-		}
-		if len(res) > 0 {
-			switch {
-			case cfg.outputFile != "":
-				if err := os.WriteFile(cfg.outputFile, res, 0644); err != nil {
-					log.Fatal(err.Error())
-				}
-			default:
-				_, _ = os.Stdout.Write(res)
-			}
-		}
-	}()
+	defer cfg.output()
 
 	switch {
 	case cfg.procOnly:
@@ -437,26 +442,27 @@ func main() {
 			printSync := &sync.Mutex{}
 
 			for pid := constMinPID; pid < constMaxPID; pid++ {
-				if pid == myPID {
+				if pid == myPID && cfg.ignoreSelf {
 					wg.Done()
 					continue
 				}
 				_ = workers.Submit(func() {
-					defer wg.Done()
-					procfsTarget := filepath.Join(constProcDir, strconv.Itoa(pid), "/exe")
 					// Only check elf files which should be all these will be anyway.
-					file, err := cfg.checkFilePath(procfsTarget)
+					file, err := cfg.checkFilePath(filepath.Join(constProcDir, strconv.Itoa(pid), "/exe"))
 					// anything that is not an error is a valid /proc/*/exe link we could see and process. We will analyze it.
 					if errors.Is(err, os.ErrNotExist) {
+						wg.Done()
 						return
 					}
 					if err != nil {
 						printSync.Lock()
 						log.Printf("(!) could not read /proc/%d/exe: %s", pid, err)
 						printSync.Unlock()
+						wg.Done()
 						return
 					}
 					if (file.Entropy < cfg.entropyMaxVal) || (!file.IsELF && cfg.elfOnly) {
+						wg.Done()
 						return
 					}
 
@@ -464,6 +470,7 @@ func main() {
 					results.Add(file)
 					cfg.printResults(file)
 					printSync.Unlock()
+					wg.Done()
 				})
 			}
 
