@@ -15,10 +15,12 @@ import (
 	"git.tcp.direct/kayos/common/pool"
 )
 
+// HashType is a type for hash types.
 type HashType uint8
 
 var bufs = pool.NewBufferFactory()
 
+//goland:noinspection GoUnusedConst
 const (
 	HashNull HashType = iota
 	HashTypeMD5
@@ -27,10 +29,7 @@ const (
 	HashTypeSHA512
 )
 
-type HashResult struct {
-	Type HashType
-}
-
+// HashEngines is a map of hash types to hash functions.
 var HashEngines = map[HashType]func() hash.Hash{
 	HashTypeMD5:    md5.New,
 	HashTypeSHA1:   sha1.New,
@@ -70,14 +69,17 @@ func putBuf(b []byte) {
 	hashBufs.Put(b)
 }
 
+// MultiHasher is a struct for hashing multiple types of hashes.
 type MultiHasher struct {
 	todo []HashType
 }
 
+// NewMultiHasher creates a new MultiHasher.
 func NewMultiHasher(types ...HashType) *MultiHasher {
 	return &MultiHasher{todo: types}
 }
 
+// Hash hashes the data from the reader and returns a map of hash types to their corresponding hash values.
 func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 	if len(m.todo) == 0 {
 		return nil, errors.New("no hash types specified")
@@ -146,6 +148,7 @@ func (m *MultiHasher) Hash(r io.Reader) (map[HashType]string, error) {
 	return res, errors.Join(errs...)
 }
 
+// HashFile hashes the file at the given path using [Hash].
 func (m *MultiHasher) HashFile(path string) (map[HashType]string, error) {
 	var err error
 	var fSize int64

@@ -89,7 +89,7 @@ func TestGoldenMaster(t *testing.T) {
 	})
 
 	t.Run("isELF", func(t *testing.T) {
-		isELF, err := IsElf(bytes.NewReader(testELF))
+		isELF, err := IsELF(bytes.NewReader(testELF))
 		if err != nil {
 			t.Fatal(err)
 		}

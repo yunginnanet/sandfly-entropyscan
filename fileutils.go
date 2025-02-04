@@ -57,33 +57,40 @@ const (
 	constMagicNumElf = "7f454c46"
 )
 
+// ErrNotRegularFile is returned when a file is not a regular file.
 type ErrNotRegularFile struct {
 	Path string
 }
 
+// Error returns the error message.
 func (e *ErrNotRegularFile) Error() string {
 	return fmt.Sprintf("file '%s' is not a regular file", e.Path)
 }
 
+// NewErrNotRegularFile returns a new ErrNotRegularFile.
 func NewErrNotRegularFile(path string) *ErrNotRegularFile {
 	return &ErrNotRegularFile{Path: path}
 }
 
+// ErrFileTooLarge is returned when a file is too large.
 type ErrFileTooLarge struct {
 	Path string
 	Size int64
 	Max  int64
 }
 
+// Error returns the error message.
 func (e *ErrFileTooLarge) Error() string {
 	return fmt.Sprintf("file size of '%s' is too large (%d bytes) to calculate entropy (max allowed: %d bytes)",
 		e.Path, e.Size, e.Max)
 }
 
+// NewErrFileTooLarge returns a new ErrFileTooLarge.
 func NewErrFileTooLarge(path string, size int64) *ErrFileTooLarge {
 	return &ErrFileTooLarge{Path: path, Size: size, Max: constMaxFileSize}
 }
 
+// ErrNoPath is returned when no path is provided.
 var ErrNoPath = fmt.Errorf("no path provided")
 
 var elfType []byte
@@ -149,10 +156,11 @@ func IsFileElf(path string) (isElf bool, err error) {
 		return false, fmt.Errorf("file '%s' is too small to be an ELF file", path)
 	}
 
-	return IsElf(f)
+	return IsELF(f)
 }
 
-func IsElf(f io.Reader) (isElf bool, err error) {
+// IsELF will read the magic bytes from the passed file and determine if it is an ELF file.
+func IsELF(f io.Reader) (isElf bool, err error) {
 	var hexData [constMagicNumRead]byte
 
 	var n int
@@ -172,6 +180,7 @@ var chunkPool = sync.Pool{
 	},
 }
 
+// Entropy calculates the entropy of a file by counting the occurences of individual bytes read from [f], an [io.Reader].
 func Entropy(f io.Reader, size int64) (entropy float64, err error) {
 	dataBytes := chunkPool.Get().([]byte)
 	byteCounts := make([]int, 256)

@@ -88,8 +88,10 @@ func (csv csvSchema) header() []byte {
 }
 
 var (
+	// ErrUnsupportedType is returned when a type is not supported during CSV reflection.
 	ErrUnsupportedType = errors.New("unsupported type")
-	ErrNilPointer      = errors.New("nil pointer")
+	// ErrNilPointer is returned when a pointer is nil during CSV reflection.
+	ErrNilPointer = errors.New("nil pointer")
 )
 
 func (csv csvSchema) parse(in any) ([]byte, error) {
@@ -184,24 +186,29 @@ var defCSVHeader = csvSchema{
 	delim: constDelimeterDefault,
 }
 
+// Results is a struct that holds the results of an entropy scan. It contains a slice of [File] and a [csvSchema].
 type Results struct {
 	Files
 	csvSchema csvSchema
 }
 
+// NewResults creates a new [Results] struct with an empty slice of [File] and the default [csvSchema].
 func NewResults() *Results {
 	return &Results{Files: make(Files, 0), csvSchema: defCSVHeader}
 }
 
+// WithDelimiter sets the delimiter for the [Results] struct for purposes of CSV marshalling.
 func (r *Results) WithDelimiter(delim string) *Results {
 	r.csvSchema.delim = delim
 	return r
 }
 
+// Add adds a [File] to the [Results] struct.
 func (r *Results) Add(f *File) {
 	r.Files = append(r.Files, f)
 }
 
+// MarshalCSV marshals the [Results] struct to CSV format using the [r.csvSchema].
 func (r *Results) MarshalCSV() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	write := func(data []byte) { _, _ = buf.Write(data) }
@@ -217,8 +224,10 @@ func (r *Results) MarshalCSV() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Files is a slice of [File] pointers.
 type Files []*File
 
+// File is a struct that encapsulates metadata, checksuhms, and entropy results.
 type File struct {
 	Path      string     `json:"path"`
 	Name      string     `json:"name"`
@@ -227,6 +236,7 @@ type File struct {
 	Checksums *Checksums `json:"checksums"`
 }
 
+// Checksums is a struct that encapsulates all checksums of a [File].
 type Checksums struct {
 	MD5    string `json:"md5"`
 	SHA1   string `json:"sha1"`
@@ -235,6 +245,7 @@ type Checksums struct {
 	mu     sync.RWMutex
 }
 
+// Get returns the checksum of the given [HashType].
 func (c *Checksums) Get(ht HashType) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -252,6 +263,7 @@ func (c *Checksums) Get(ht HashType) string {
 	}
 }
 
+// Set sets the checksum of the given [HashType].
 func (c *Checksums) Set(ht HashType, val string) {
 	c.mu.Lock()
 	switch ht {
