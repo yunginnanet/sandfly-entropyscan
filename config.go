@@ -22,6 +22,7 @@ type sshConfig struct {
 	Agent             bool
 	Prompt            bool
 	Verbose           bool
+	Trace             bool
 	Timeout           time.Duration
 }
 
@@ -190,8 +191,12 @@ func (cfg *config) parseFlags() {
 		"prompt for credentials (def: false)",
 	)
 	flag.BoolVar(
-		&cfg.inCfg.sshConfig.Verbose, "ssh-verbose",
+		&cfg.inCfg.sshConfig.Verbose, "v",
 		false, "SSH verbose output (def: false)",
+	)
+	flag.BoolVar(
+		&cfg.inCfg.sshConfig.Trace, "vv",
+		false, "SSH trace output (def: false)",
 	)
 
 	// ----------------------------------------------------------------------

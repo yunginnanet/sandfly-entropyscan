@@ -2,7 +2,6 @@ package ssh
 
 import (
 	"fmt"
-	"github.com/l0nax/go-spew/spew"
 	"golang.org/x/crypto/ssh"
 	"log"
 	"sync/atomic"
@@ -23,10 +22,9 @@ type SSH struct {
 	conn    ssh.Conn
 	tout    time.Duration
 	auth    []ssh.AuthMethod
-	sesh    *ssh.Session
 	client  *ssh.Client
 	closed  *atomic.Bool
-	verbose bool
+	verbose int
 }
 
 func (s *SSH) String() string {
@@ -66,9 +64,8 @@ func NewSSH(host string, user string) *SSH {
 }
 
 // WithVerbose increases the verbosity of SSH operations.
-func (s *SSH) WithVerbose(b bool) *SSH {
-	s.verbose = b
-	spew.Dump(s)
+func (s *SSH) WithVerbose(i int) *SSH {
+	s.verbose = i
 	return s
 }
 
@@ -90,8 +87,15 @@ func (s *SSH) WithVersion(ver string) *SSH {
 	return s
 }
 
+func (s *SSH) traceLn(fmt string, args ...any) {
+	if s.verbose < 2 {
+		return
+	}
+	log.Printf(s.String()+"> "+fmt+"\n", args...)
+}
+
 func (s *SSH) verbLn(fmt string, args ...any) {
-	if !s.verbose {
+	if s.verbose < 1 {
 		return
 	}
 	log.Printf(s.String()+"> "+fmt+"\n", args...)
@@ -99,13 +103,13 @@ func (s *SSH) verbLn(fmt string, args ...any) {
 
 // Close closes the SSH connection.
 func (s *SSH) Close() error {
-	s.verbLn("[close] closing SSH connection")
+	s.traceLn("[close] closing SSH connection")
 	s.closed.Store(true)
 	if s.conn == nil {
-		s.verbLn("[close] SSH connection is nil")
+		s.traceLn("[close] SSH connection is nil")
 	}
 	if s.client == nil {
-		s.verbLn("[close] SSH client is nil")
+		s.traceLn("[close] SSH client is nil")
 	}
 	var err error
 	if s.closed != nil {

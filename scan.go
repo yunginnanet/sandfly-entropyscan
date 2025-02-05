@@ -295,10 +295,23 @@ func (cfg *config) scanSSH(parallel bool) error {
 	return errors.Join(errs...)
 }
 
+func (scfg *sshConfig) verbInt() int {
+	i := 0
+	if scfg.Verbose {
+		i = 1
+	}
+	if scfg.Trace {
+		i = 2
+	}
+	return i
+}
+
 func (cfg *config) sshInit() {
 	cfg.inCfg.sshConn = ssh.NewSSH(cfg.inCfg.sshConfig.Host, cfg.inCfg.sshConfig.User).
-		WithPort(cfg.inCfg.sshConfig.Port).WithTimeout(cfg.inCfg.sshConfig.Timeout).
-		WithVersion(constVersion).WithVerbose(cfg.inCfg.sshConfig.Verbose)
+		WithPort(cfg.inCfg.sshConfig.Port).
+		WithTimeout(cfg.inCfg.sshConfig.Timeout).
+		WithVersion(constVersion).
+		WithVerbose(cfg.inCfg.sshConfig.verbInt())
 
 	if cfg.inCfg.sshConfig.Agent {
 		cfg.inCfg.sshConn = cfg.inCfg.sshConn.WithAgent()
