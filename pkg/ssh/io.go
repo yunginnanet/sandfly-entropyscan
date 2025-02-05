@@ -34,7 +34,7 @@ func (s *SSH) EndSession() (err error) {
 		s.verbLn("[session] closing session...")
 		err = s.sesh.Close()
 		if err != nil {
-			s.verbLn("[session] error closing session:", err)
+			s.verbLn("[session] error closing session: %s", err.Error())
 		}
 		s.sesh = nil
 	}
