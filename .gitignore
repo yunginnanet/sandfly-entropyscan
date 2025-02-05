@@ -1,2 +1,7 @@
 /sandfly-entropyscan
 .idea/
+*.log
+*.out
+*.csv
+*.json
+*.test
