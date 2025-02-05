@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	defaultSSHPort    = 22
-	defaultSSHVersion = "SSH-2.0-EntropyScan"
+	DefaultSSHPort    = 22
+	DefaultSSHVersion = "SSH-2.0-SF"
 )
 
 // SSH is a struct that enables using SSH for remote agent-less entropy scanning.
@@ -30,8 +30,8 @@ type SSH struct {
 func NewSSH(host string, user string) *SSH {
 	s := &SSH{
 		host:   host,
-		port:   defaultSSHPort,
-		ver:    defaultSSHVersion,
+		port:   DefaultSSHPort,
+		ver:    DefaultSSHVersion,
 		user:   user,
 		tout:   20 * time.Second,
 		auth:   make([]ssh.AuthMethod, 0),
@@ -75,16 +75,22 @@ func (s *SSH) Connect() error {
 	}
 
 	config := &ssh.ClientConfig{
-		User:          s.user,
-		Auth:          s.auth,
-		ClientVersion: s.ver,
-		Timeout:       s.tout,
+		User:            s.user,
+		Auth:            s.auth,
+		ClientVersion:   s.ver,
+		Timeout:         s.tout,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		BannerCallback:  ssh.BannerDisplayStderr(),
 	}
+
+	config.SetDefaults()
 
 	var err error
 	if s.client, err = ssh.Dial("tcp", s.host+":"+fmt.Sprintf("%d", s.port), config); err != nil {
 		return err
 	}
+
+	s.closed.Store(false)
 
 	return nil
 }

@@ -20,24 +20,38 @@ func (s *SSH) WithPassword(password string) *SSH {
 }
 
 // WithKey parses data from an SSH key to extract signers for authentication.
-func (s *SSH) WithKey(key []byte) *SSH {
-	signer, err := ssh.ParsePrivateKey(key)
+func (s *SSH) WithKey(key []byte, pass ...string) *SSH {
+	var err error
+	var signer ssh.Signer
+
+	if pass == nil || len(pass) == 0 || pass[0] == "" {
+		signer, err = ssh.ParsePrivateKey(key)
+	} else {
+		signer, err = ssh.ParsePrivateKeyWithPassphrase(key, []byte(pass[0]))
+	}
+
 	if err != nil {
-		_, _ = os.Stdout.WriteString(err.Error() + "\n")
+		_, _ = os.Stderr.WriteString(err.Error() + "\n")
 		return s
 	}
+
 	s.auth = append(s.auth, ssh.PublicKeys(signer))
 	return s
 }
 
 // WithKeyFile parses data from an SSH to be processed by [s.WithKey].
-func (s *SSH) WithKeyFile(path string) *SSH {
+func (s *SSH) WithKeyFile(path string, pass ...string) *SSH {
 	dat, err := os.ReadFile(path)
 	if err != nil {
-		_, _ = os.Stdout.WriteString(err.Error() + "\n")
+		_, _ = os.Stderr.WriteString(err.Error() + "\n")
 		return s
 	}
-	return s.WithKey(dat)
+	return s.WithKey(dat, pass...)
+}
+
+// WithEncryptedKeyFile parses data from an SSH key to extract signers for authentication.
+func (s *SSH) WithEncryptedKeyFile(path, pass string) *SSH {
+	return s.WithKeyFile(path, pass)
 }
 
 // WithAgent adds all available signers from an SSH agent to the [SSH] struct for authentication. (*nix)
@@ -51,7 +65,7 @@ func (s *SSH) WithAgent() *SSH {
 	sshAgent := agent.NewClient(conn)
 	signers, serr := sshAgent.Signers()
 	if serr != nil {
-		_, _ = os.Stdout.WriteString(serr.Error() + "\n")
+		_, _ = os.Stderr.WriteString(serr.Error() + "\n")
 		_ = conn.Close()
 		return s
 	}

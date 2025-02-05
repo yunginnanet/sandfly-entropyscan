@@ -44,7 +44,7 @@ import (
 
 const (
 	// constVersion Version
-	constVersion = "1.2.0"
+	constVersion = "1.3.0"
 	// constProcDir default /proc dir for processes.
 	constProcDir = "/proc"
 	// constDelimeterDefault default delimiter for CSV output.

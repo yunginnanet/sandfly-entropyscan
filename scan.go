@@ -250,6 +250,19 @@ func (cfg *config) scanSSH(parallel bool) error {
 		errs = append(errs, perr)
 	}
 
+	syncWork := func(pid int, pidPath string, pidData []byte) {
+		perr := cfg.sshProcess(pid, pidPath, pidData)
+		if errors.Is(perr, ErrNotElf) || errors.Is(perr, ErrLowEntropy) {
+			log.Println(perr.Error())
+			wg.Done()
+			return
+		}
+		errMu.Lock()
+		errs = append(errs, perr)
+		errMu.Unlock()
+		wg.Done()
+	}
+
 	concurrent := func(pid int) {
 		pidPath, pidData, err := cfg.sshPID(pid)
 		if err != nil {
@@ -260,20 +273,14 @@ func (cfg *config) scanSSH(parallel bool) error {
 		}
 
 		wg.Add(1)
-		_ = workers.Submit(func() {
-			perr := cfg.sshProcess(pid, pidPath, pidData)
-			errMu.Lock()
-			errs = append(errs, perr)
-			errMu.Unlock()
-			wg.Done()
-		})
+
+		_ = workers.Submit(func() { syncWork(pid, pidPath, pidData) })
 	}
 
 	for pid := constMinPID; pid < constMaxPID; pid++ {
 		switch parallel {
 		case false:
 			synchronous(pid)
-			continue
 		case true:
 			concurrent(pid)
 		}
@@ -294,15 +301,22 @@ func (cfg *config) sshInit() {
 		WithVersion(constVersion)
 
 	if cfg.inCfg.sshConfig.Agent {
-		cfg.inCfg.sshConn.WithAgent()
+		cfg.inCfg.sshConn = cfg.inCfg.sshConn.WithAgent()
 	}
 
 	if cfg.inCfg.sshConfig.KeyFile != "" {
-		cfg.inCfg.sshConn.WithKeyFile(cfg.inCfg.sshConfig.KeyFile)
+		switch {
+		case cfg.inCfg.sshConfig.KeyFilePassphrase == "":
+			cfg.inCfg.sshConn =
+				cfg.inCfg.sshConn.WithKeyFile(cfg.inCfg.sshConfig.KeyFile)
+		case cfg.inCfg.sshConfig.KeyFilePassphrase != "":
+			cfg.inCfg.sshConn =
+				cfg.inCfg.sshConn.WithEncryptedKeyFile(cfg.inCfg.sshConfig.KeyFile, cfg.inCfg.sshConfig.KeyFilePassphrase)
+		}
 	}
 
 	if cfg.inCfg.sshConfig.Passwd != "" {
-		cfg.inCfg.sshConn.WithPassword(cfg.inCfg.sshConfig.Passwd)
+		cfg.inCfg.sshConn = cfg.inCfg.sshConn.WithPassword(cfg.inCfg.sshConfig.Passwd)
 	}
 
 	if err := cfg.inCfg.sshConn.Connect(); err != nil {
