@@ -4,32 +4,50 @@ import (
 	"errors"
 	"golang.org/x/crypto/ssh"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 )
 
 // GetSession returns a new SSH session.
 func (s *SSH) GetSession() (sesh *ssh.Session, err error) {
+	s.verbLn("[session] getting session...")
+	if s.Closed() {
+		s.verbLn("[session] parent is closed")
+		return nil, io.ErrClosedPipe
+	}
 	if s.sesh == nil {
 		s.sesh, err = s.client.NewSession()
-		return s.sesh, err
+		s.verbLn("[session] session created")
 	}
+
 	return s.sesh, nil
 }
 
 // EndSession closes the SSH session.
 func (s *SSH) EndSession() (err error) {
+	s.verbLn("[session] ending session...")
+	if s.Closed() {
+		s.verbLn("[session] parent is closed")
+		return io.ErrClosedPipe
+	}
 	if s.sesh != nil {
+		s.verbLn("[session] closing session...")
 		err = s.sesh.Close()
+		if err != nil {
+			s.verbLn("[session] error closing session:", err)
+		}
 		s.sesh = nil
 	}
+
+	s.verbLn("[session] session ended")
 	return err
 }
 
 // ReadProc reads the executable of a process from the remote host.
 func (s *SSH) ReadProc(pid int) (path string, data []byte, err error) {
+	s.verbLn("[io] reading procfs, PID %d...", pid)
 	if s.Closed() {
+		s.verbLn("[io] parent is closed")
 		return "", nil, io.ErrClosedPipe
 	}
 
@@ -43,14 +61,24 @@ func (s *SSH) ReadProc(pid int) (path string, data []byte, err error) {
 
 	var pthB = []byte(procFSPath)
 
-	if pthB, err = sesh.Output("readlink -f " + procFSPath); err != nil {
-		_, _ = os.Stderr.WriteString(err.Error() + "\n")
+	rlCmd := "readlink -f " + procFSPath
+
+	s.verbLn(rlCmd)
+
+	if pthB, err = sesh.Output(rlCmd); err != nil {
+		s.verbLn("[io] readlink -f error: %s", err)
 		pthB = []byte(procFSPath)
 	}
 
 	path = string(pthB)
 
-	data, err = sesh.Output("cat " + procFSPath)
+	s.verbLn("[io] procfs path: %s", path)
+
+	catCmd := "cat " + procFSPath
+
+	s.verbLn(catCmd)
+
+	data, err = sesh.Output(catCmd)
 
 	return path, data, errors.Join(err, s.EndSession())
 }

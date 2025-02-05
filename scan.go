@@ -298,7 +298,7 @@ func (cfg *config) scanSSH(parallel bool) error {
 func (cfg *config) sshInit() {
 	cfg.inCfg.sshConn = ssh.NewSSH(cfg.inCfg.sshConfig.Host, cfg.inCfg.sshConfig.User).
 		WithPort(cfg.inCfg.sshConfig.Port).WithTimeout(cfg.inCfg.sshConfig.Timeout).
-		WithVersion(constVersion)
+		WithVersion(constVersion).WithVerbose(cfg.inCfg.sshConfig.Verbose)
 
 	if cfg.inCfg.sshConfig.Agent {
 		cfg.inCfg.sshConn = cfg.inCfg.sshConn.WithAgent()

@@ -21,6 +21,7 @@ type sshConfig struct {
 	Port              int
 	Agent             bool
 	Prompt            bool
+	Verbose           bool
 	Timeout           time.Duration
 }
 
@@ -98,6 +99,8 @@ func (cfg *config) parseFlags() {
 		&sumSHA512: HashTypeSHA512,
 	}
 
+	// ----------------------------------------------------------------------
+
 	// # Strings
 
 	flag.StringVar(&cfg.inCfg.filePath, "file", "", "full path to a single file to analyze")
@@ -108,12 +111,16 @@ func (cfg *config) parseFlags() {
 		"output file to write results to (default stdout) (only json and csv formats supported)",
 	)
 
+	// ----------------------------------------------------------------------
+
 	// # Floats
 
 	flag.Float64Var(
 		&cfg.entropyMaxVal, "entropy", 5.0,
 		"show any file with entropy greater than or equal to this value (0.0 - 8.0, max 8.0) (def: 5.0)",
 	)
+
+	// ----------------------------------------------------------------------
 
 	// # Bools
 
@@ -146,26 +153,48 @@ func (cfg *config) parseFlags() {
 		"use worker pool for concurrent file processing (experimental)",
 	)
 
+	// ----------------------------------------------------------------------
+
 	// # SSH
 
-	flag.StringVar(&cfg.inCfg.sshConfig.Host, "ssh-host", "", "SSH host to connect to")
-	flag.StringVar(&cfg.inCfg.sshConfig.User, "ssh-user", "", "SSH user name")
-	flag.StringVar(&cfg.inCfg.sshConfig.Passwd, "ssh-pass", "", "SSH password")
-	flag.StringVar(&cfg.inCfg.sshConfig.KeyFile, "ssh-key", "", "SSH private key file")
+	flag.StringVar(
+		&cfg.inCfg.sshConfig.Host, "ssh-host", "", "SSH host to connect to",
+	)
+	flag.StringVar(
+		&cfg.inCfg.sshConfig.User, "ssh-user", "", "SSH user name",
+	)
+	flag.StringVar(
+		&cfg.inCfg.sshConfig.Passwd, "ssh-pass", "", "SSH password",
+	)
+	flag.StringVar(
+		&cfg.inCfg.sshConfig.KeyFile, "ssh-key", "", "SSH private key file",
+	)
 	flag.StringVar(
 		&cfg.inCfg.sshConfig.KeyFilePassphrase,
 		"ssh-key-pass", "", "SSH private key passphrase",
 	)
-	flag.DurationVar(&cfg.inCfg.sshConfig.Timeout, "ssh-timeout", 30*time.Second, "SSH connection timeout")
+	flag.DurationVar(
+		&cfg.inCfg.sshConfig.Timeout, "ssh-timeout", 30*time.Second, "SSH connection timeout",
+	)
 	flag.StringVar(
 		&cfg.inCfg.sshConfig.Version, "ssh-version", ssh.DefaultSSHVersion, "SSH version string",
 	)
-	flag.IntVar(&cfg.inCfg.sshConfig.Port, "ssh-port", ssh.DefaultSSHPort, "SSH port")
-	flag.BoolVar(&cfg.inCfg.sshConfig.Agent, "ssh-agent", false, "use SSH agent")
+	flag.IntVar(
+		&cfg.inCfg.sshConfig.Port, "ssh-port", ssh.DefaultSSHPort, "SSH port",
+	)
+	flag.BoolVar(
+		&cfg.inCfg.sshConfig.Agent, "ssh-agent", false, "use SSH agent",
+	)
 	flag.BoolVar(
 		&cfg.inCfg.sshConfig.Prompt, "ssh-prompt", false,
 		"prompt for credentials (def: false)",
 	)
+	flag.BoolVar(
+		&cfg.inCfg.sshConfig.Verbose, "ssh-verbose",
+		false, "SSH verbose output (def: false)",
+	)
+
+	// ----------------------------------------------------------------------
 
 	flag.Parse()
 
