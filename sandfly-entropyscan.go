@@ -96,7 +96,7 @@ func (cfg *config) run() {
 
 	case cfg.inCfg.sshConfig.Host != "":
 		if err := cfg.sshPIDs(); err != nil {
-			log.Fatalf("error scanning SSH host: %v\n", err)
+			log.Printf("error scanning SSH host: %v\n", err)
 		}
 	}
 }

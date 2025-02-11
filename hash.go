@@ -153,35 +153,51 @@ func (m *MultiHasher) HashFile(path string) (map[HashType]string, error) {
 	var err error
 	var fSize int64
 	var f io.ReadCloser
-	var hashResults = make(map[HashType]string, len(m.todo))
-	if f, fSize, err = preCheckFilepath(path); err != nil {
-		return hashResults, err
-	}
 
-	defer func() {
-		_ = f.Close()
-	}()
+	if f, fSize, err = preCheckFilepath(path); err != nil {
+		return nil, err
+	}
 
 	if fSize > int64(constMaxFileSize) {
-		return hashResults, NewErrFileTooLarge(path, fSize)
+		return nil, errors.Join(f.Close(), NewErrFileTooLarge(path, fSize))
 	}
 
-	return m.Hash(f)
+	res, herr := m.Hash(f)
+
+	return res, errors.Join(f.Close(), herr)
 }
 
-func (cfg *config) runEnabledHashers(file *File) error {
+func (cfg *config) multHasher(file *File) *MultiHasher {
 	if file.Checksums == nil {
 		file.Checksums = new(Checksums)
 	}
 
-	mh := NewMultiHasher(cfg.hashers...)
+	return NewMultiHasher(cfg.hashers...)
+}
+
+func (f *File) setHashes(hashes map[HashType]string) {
+	if hashes == nil {
+		return
+	}
+	for ht, h := range hashes {
+		f.Checksums.Set(ht, h)
+	}
+}
+
+func (cfg *config) runEnabledHashersOnPath(file *File) error {
+	mh := cfg.multHasher(file)
 
 	results, err := mh.HashFile(file.Path)
-	if err != nil {
-		return err
-	}
-	for ht, res := range results {
-		file.Checksums.Set(ht, res)
-	}
-	return nil
+	file.setHashes(results)
+
+	return err
+}
+
+func (cfg *config) runEnabledHashersOnBytes(file *File, r io.Reader) error {
+	mh := cfg.multHasher(file)
+
+	results, err := mh.Hash(r)
+	file.setHashes(results)
+
+	return err
 }

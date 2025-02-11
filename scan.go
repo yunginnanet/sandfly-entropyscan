@@ -144,7 +144,7 @@ func (cfg *config) checkData(path string, data []byte) (file *File, err error) {
 
 	file.Path = path
 
-	err = cfg.runEnabledHashers(file)
+	err = cfg.runEnabledHashersOnBytes(file, bytes.NewReader(data))
 
 	return file, err
 }
@@ -184,7 +184,7 @@ func (cfg *config) checkFilePath(filePath string) (file *File, err error) {
 		return file, nil
 	}
 
-	err = cfg.runEnabledHashers(file)
+	err = cfg.runEnabledHashersOnPath(file)
 
 	return file, err
 }
@@ -199,9 +199,7 @@ var (
 func (cfg *config) sshPID(pid int) (pidPath string, pidData []byte, err error) {
 	if pidPath, pidData, err = cfg.inCfg.sshConn.ReadProc(pid); err != nil {
 		err = fmt.Errorf("error reading pid from SSH host (%d)(%s): %w", pid, pidPath, err)
-		return
 	}
-
 	return
 }
 
@@ -236,13 +234,13 @@ func (cfg *config) scanSSH(parallel bool) error {
 	var errs = make([]error, 0, constMaxPID-constMinPID)
 	errMu := new(sync.Mutex)
 
-	synchronous := func(pid int) {
-		pidPath, pidData, err := cfg.sshPID(pid)
+	synchronous := func(myPID int) {
+		pidPath, pidData, err := cfg.sshPID(myPID)
 		if err != nil {
 			errs = append(errs, err)
 			return
 		}
-		perr := cfg.sshProcess(pid, pidPath, pidData)
+		perr := cfg.sshProcess(myPID, pidPath, pidData)
 		if errors.Is(perr, ErrNotElf) || errors.Is(perr, ErrLowEntropy) {
 			log.Println(perr.Error())
 			return
@@ -250,8 +248,8 @@ func (cfg *config) scanSSH(parallel bool) error {
 		errs = append(errs, perr)
 	}
 
-	syncWork := func(pid int, pidPath string, pidData []byte) {
-		perr := cfg.sshProcess(pid, pidPath, pidData)
+	syncWork := func(thePID int, pidPath string, pidData []byte) {
+		perr := cfg.sshProcess(thePID, pidPath, pidData)
 		if errors.Is(perr, ErrNotElf) || errors.Is(perr, ErrLowEntropy) {
 			log.Println(perr.Error())
 			wg.Done()
@@ -263,8 +261,8 @@ func (cfg *config) scanSSH(parallel bool) error {
 		wg.Done()
 	}
 
-	concurrent := func(pid int) {
-		pidPath, pidData, err := cfg.sshPID(pid)
+	concurrent := func(myPID int) {
+		pidPath, pidData, err := cfg.sshPID(myPID)
 		if err != nil {
 			errMu.Lock()
 			errs = append(errs, err)
@@ -274,10 +272,15 @@ func (cfg *config) scanSSH(parallel bool) error {
 
 		wg.Add(1)
 
-		_ = workers.Submit(func() { syncWork(pid, pidPath, pidData) })
+		_ = workers.Submit(func() { syncWork(myPID, pidPath, pidData) })
 	}
 
-	for pid := constMinPID; pid < constMaxPID; pid++ {
+	pids, err := cfg.inCfg.sshConn.GetPIDs()
+	if err != nil {
+		return fmt.Errorf("error getting pids from SSH host: %w", err)
+	}
+
+	for _, pid := range pids {
 		switch parallel {
 		case false:
 			synchronous(pid)

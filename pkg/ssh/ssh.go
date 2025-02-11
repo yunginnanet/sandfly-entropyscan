@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
 	"golang.org/x/crypto/ssh"
 	"log"
@@ -8,23 +9,27 @@ import (
 	"time"
 )
 
+//goland:noinspection GoExportedElementShouldHaveComment
 const (
-	DefaultSSHPort    = 22
-	DefaultSSHVersion = "SSH-2.0-SF"
+	DefaultSSHPort        = 22
+	DefaultSSHVersion     = "SSH-2.0-SF"
+	DefaultSessionPrewarm = 50
 )
 
 // SSH is a struct that enables using SSH for remote agent-less entropy scanning.
 type SSH struct {
-	host    string
-	user    string
-	ver     string
-	port    int
-	conn    ssh.Conn
-	tout    time.Duration
-	auth    []ssh.AuthMethod
-	client  *ssh.Client
-	closed  *atomic.Bool
-	verbose int
+	host           string
+	user           string
+	ver            string
+	port           int
+	conn           ssh.Conn
+	tout           time.Duration
+	auth           []ssh.AuthMethod
+	client         *ssh.Client
+	closed         *atomic.Bool
+	sessions       chan *ssh.Session
+	sessionPrewarm int
+	verbose        int
 }
 
 func (s *SSH) String() string {
@@ -51,13 +56,15 @@ func (s *SSH) String() string {
 // NewSSH substantiates a new [SSH] struct and returns a pointer to it.
 func NewSSH(host string, user string) *SSH {
 	s := &SSH{
-		host:   host,
-		port:   DefaultSSHPort,
-		ver:    DefaultSSHVersion,
-		user:   user,
-		tout:   20 * time.Second,
-		auth:   make([]ssh.AuthMethod, 0),
-		closed: new(atomic.Bool),
+		host:           host,
+		port:           DefaultSSHPort,
+		ver:            DefaultSSHVersion,
+		user:           user,
+		tout:           20 * time.Second,
+		auth:           make([]ssh.AuthMethod, 0),
+		closed:         new(atomic.Bool),
+		sessions:       make(chan *ssh.Session, 50),
+		sessionPrewarm: DefaultSessionPrewarm,
 	}
 	s.closed.Store(false)
 	return s
@@ -87,6 +94,12 @@ func (s *SSH) WithVersion(ver string) *SSH {
 	return s
 }
 
+// WithSessionPrewarm sets the number of sessions to create ahead of time.
+func (s *SSH) WithSessionPrewarm(n int) *SSH {
+	s.sessionPrewarm = n
+	return s
+}
+
 func (s *SSH) traceLn(fmt string, args ...any) {
 	if s.verbose < 2 {
 		return
@@ -98,26 +111,29 @@ func (s *SSH) verbLn(fmt string, args ...any) {
 	if s.verbose < 1 {
 		return
 	}
+
 	log.Printf(s.String()+"> "+fmt+"\n", args...)
 }
 
 // Close closes the SSH connection.
 func (s *SSH) Close() error {
-	s.traceLn("[close] closing SSH connection")
+	s.traceLn("closing SSH connection")
 	s.closed.Store(true)
-	if s.conn == nil {
-		s.traceLn("[close] SSH connection is nil")
-	}
-	if s.client == nil {
-		s.traceLn("[close] SSH client is nil")
-	}
+
 	var err error
-	if s.closed != nil {
-		err = s.client.Close()
-		if err != nil {
-			s.verbLn("[close] error closing SSH connection: %v", err)
-		}
+
+	close(s.sessions)
+
+	for sesh := range s.sessions {
+		cerr := sesh.Close()
+		err = errors.Join(err, cerr)
 	}
+
+	if s.client != nil {
+		ccerr := s.client.Close()
+		err = errors.Join(err, ccerr)
+	}
+
 	return err
 }
 
@@ -138,18 +154,21 @@ func (s *SSH) Connect() error {
 
 	config.SetDefaults()
 
-	s.verbLn("[connect] connecting...", s.host, s.port)
+	s.verbLn("connecting to %s:%d...", s.host, s.port)
 
 	var err error
 	if s.client, err = ssh.Dial("tcp", s.host+":"+fmt.Sprintf("%d", s.port), config); err != nil {
-		s.verbLn("[connect] error connecting: %v", err)
+		s.verbLn("error connecting: %v", err)
 		return err
 	}
 
-	s.conn = s.client.Conn
-	s.closed.Store(false)
+	s.verbLn("connected!")
 
-	s.verbLn("[connect] connected!")
+	s.verbLn("waiting for session creation...")
+	go s.createSessions()
+	time.Sleep(2 * time.Second)
+
+	s.closed.Store(false)
 
 	return nil
 }

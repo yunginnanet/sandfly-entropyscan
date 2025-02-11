@@ -136,7 +136,7 @@ func TestResultChecksums(t *testing.T) {
 		cfg := newConfigFromFlags()
 		cfg.hashers = []HashType{HashTypeMD5, HashTypeSHA1, HashTypeSHA256, HashTypeSHA512}
 
-		if err = cfg.runEnabledHashers(yeet); err != nil {
+		if err = cfg.runEnabledHashersOnPath(yeet); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -190,7 +190,7 @@ func TestResultChecksums(t *testing.T) {
 		cfg := newConfigFromFlags()
 		cfg.hashers = []HashType{HashTypeMD5, HashTypeSHA1}
 
-		if err = cfg.runEnabledHashers(yeet); err != nil {
+		if err = cfg.runEnabledHashersOnPath(yeet); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
